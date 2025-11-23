@@ -2142,7 +2142,15 @@ class Overlay(ScaledWindow):
         self.__update_alsa_color_score_table()
 
     def __update_color_scores(self, pack_cards, current_pack, current_pick):
-        '''Update ALSA color scores based on current pack'''
+        '''Update ALSA color scores based on current pack
+
+        Scoring formula:
+        - Single-color: score = base / pip_count_for_color
+        - Multi-color regular: inverse pip weighting, normalized to base
+        - Multi-color hybrid-only: base / total_hybrid_pips / num_colors
+
+        Where base = alsa_diff * pick_number
+        '''
         # Skip P1P1 (pick 1 of any pack at pick position 1)
         if current_pick <= 1:
             return
@@ -2189,20 +2197,56 @@ class Overlay(ScaledWindow):
                 if not pip_counts:
                     continue
 
-                # Calculate total pips for weight normalization
-                total_pips = sum(pip_counts.values())
-                if total_pips == 0:
-                    continue
+                base = alsa_diff * current_pick
+                contributions = self.__calculate_color_contributions(base, pip_counts)
 
-                # Add weighted contribution to each color
-                for color, pip_count in pip_counts.items():
+                for color, contribution in contributions.items():
                     if color in self.color_scores:
-                        pip_weight = pip_count / total_pips
-                        score_contribution = alsa_diff * current_pick * pip_weight
-                        self.color_scores[color] += score_contribution
+                        self.color_scores[color] += contribution
 
         except Exception as error:
             logger.error(error)
+
+    def __calculate_color_contributions(self, base, pip_counts):
+        '''Calculate color contributions with inverse pip weighting
+
+        Examples with base = 6:
+        - {B}: B = 6 (single color, 1 pip)
+        - {B}{B}: B = 3 (single color, 2 pips)
+        - {W}{B}: W = 3, B = 3 (multi-color, equal pips)
+        - {W}{W}{B}: W = 2, B = 4 (multi-color, inverse weighting)
+        - {W/B}: W = 6, B = 6 (hybrid, 0.5 pip total)
+        - {W/B}{W/B}: W = 3, B = 3 (hybrid, 1 pip total)
+        - {W/B}{W/B}{W/B}: W = 2, B = 2 (hybrid, 1.5 pips total)
+        '''
+        if not pip_counts:
+            return {}
+
+        num_colors = len(pip_counts)
+
+        # Check if all pips are hybrid (non-integer pip counts)
+        is_hybrid_only = all(pips != int(pips) for pips in pip_counts.values())
+
+        if num_colors == 1:
+            # Single-color card: contribution = base / pip_count
+            color, pips = list(pip_counts.items())[0]
+            return {color: base / pips}
+
+        if is_hybrid_only:
+            # Hybrid-only multi-color card
+            # Each hybrid symbol = 0.5 pips, but extract_colored_pips adds 0.5 to each color
+            # So sum(pip_counts) = 2 * actual_hybrid_pip_value
+            actual_hybrid_pips = sum(pip_counts.values()) / 2
+            total_contribution = base / actual_hybrid_pips
+            per_color = total_contribution / num_colors
+            return {color: per_color for color in pip_counts}
+
+        # Regular or mixed multi-color: inverse pip weighting, normalized to base
+        inverse_weights = {color: 1 / pips for color, pips in pip_counts.items()}
+        total_inverse = sum(inverse_weights.values())
+
+        return {color: base * (weight / total_inverse)
+                for color, weight in inverse_weights.items()}
 
     def __update_alsa_color_score_table(self):
         '''Update the ALSA Color Score table display'''
