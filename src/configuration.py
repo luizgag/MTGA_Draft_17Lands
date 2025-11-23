@@ -55,7 +55,7 @@ class Settings(BaseModel):
     taken_gndwr_enabled: bool = False
     taken_iwd_enabled: bool = False
     taken_wheel_enabled: bool = False
-    alsa_color_score_enabled: bool = True
+    alsa_color_score_enabled: bool = False
     arena_log_location: str = ""
 
     @field_validator('deck_filter')
