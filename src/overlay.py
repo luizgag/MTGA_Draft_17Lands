@@ -32,6 +32,7 @@ from src.card_logic import (
     get_card_colors,
     get_deck_metrics,
     suggest_deck,
+    extract_colored_pips,
 )
 
 try:
@@ -322,6 +323,8 @@ class Overlay(ScaledWindow):
             label="Suggest Decks", command=self.__open_suggest_deck_window)
         self.cardmenu.add_command(
             label="Compare Cards", command=self.__open_card_compare_window)
+        self.cardmenu.add_command(
+            label="ALSA Color Score", command=self.__open_alsa_color_score_window)
 
         self.settingsmenu = tkinter.Menu(self.menubar, tearoff=0)
         self.settingsmenu.add_command(
@@ -431,6 +434,18 @@ class Overlay(ScaledWindow):
 
         self.about_window_open = False
         self.sets_window_open = False
+
+        # ALSA Color Score tracking
+        self.alsa_color_score_table = None
+        self.alsa_color_score_window_open = False
+        self.color_scores = {
+            constants.CARD_COLOR_SYMBOL_WHITE: 0.0,
+            constants.CARD_COLOR_SYMBOL_BLUE: 0.0,
+            constants.CARD_COLOR_SYMBOL_BLACK: 0.0,
+            constants.CARD_COLOR_SYMBOL_RED: 0.0,
+            constants.CARD_COLOR_SYMBOL_GREEN: 0.0
+        }
+        self.last_processed_pick = 0
 
         self.deck_colors_option_frame = tkinter.Frame(self.root)
         self.deck_colors_options = OptionMenu(self.deck_colors_option_frame, self.deck_filter_selection,
@@ -1578,6 +1593,10 @@ class Overlay(ScaledWindow):
         self.__update_taken_table()
         self.__update_compare_table()
 
+        # Update ALSA color scores
+        self.__update_color_scores(pack_cards, current_pack, current_pick)
+        self.__update_alsa_color_score_table()
+
         if event_type == constants.LIMITED_TYPE_STRING_SEALED or \
                 event_type == constants.LIMITED_TYPE_STRING_TRAD_SEALED:
             self.__open_taken_cards_window()
@@ -2108,6 +2127,200 @@ class Overlay(ScaledWindow):
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
+
+    def __close_alsa_color_score_window(self, popup):
+        '''Clean up when closing ALSA Color Score window'''
+        self.alsa_color_score_table = None
+        self.alsa_color_score_window_open = False
+        popup.destroy()
+
+    def __reset_color_scores(self):
+        '''Reset all color scores to zero'''
+        for color in self.color_scores:
+            self.color_scores[color] = 0.0
+        self.last_processed_pick = 0
+        self.__update_alsa_color_score_table()
+
+    def __update_color_scores(self, pack_cards, current_pack, current_pick):
+        '''Update ALSA color scores based on current pack'''
+        # Skip P1P1 (pick 1 of any pack at pick position 1)
+        if current_pick <= 1:
+            return
+
+        # Calculate a unique pick identifier to avoid double processing
+        total_pick = (current_pack - 1) * 15 + current_pick
+        if total_pick <= self.last_processed_pick:
+            return
+
+        self.last_processed_pick = total_pick
+
+        try:
+            # Get ALSA diff for each card
+            result_class = CardResult(
+                self.set_metrics,
+                self.tier_data,
+                self.configuration,
+                current_pick
+            )
+
+            # Include alsa_diff in fields
+            fields = [constants.DATA_FIELD_ALSA_DIFF]
+            result_list = result_class.return_results(
+                pack_cards,
+                self.deck_filter_selection.get(),
+                fields
+            )
+
+            # Calculate scores for this pick
+            for card in result_list:
+                alsa_diff_str = card["results"][0]  # First field is ALSA_DIFF
+
+                # Skip if no valid ALSA diff
+                if alsa_diff_str == constants.RESULT_UNKNOWN_STRING:
+                    continue
+
+                alsa_diff = float(alsa_diff_str)
+
+                # Get mana cost and extract colored pips
+                mana_cost = card.get(constants.DATA_FIELD_MANA_COST, "")
+                pip_counts = extract_colored_pips(mana_cost)
+
+                # Skip if no colored pips (colorless cards)
+                if not pip_counts:
+                    continue
+
+                # Calculate total pips for weight normalization
+                total_pips = sum(pip_counts.values())
+                if total_pips == 0:
+                    continue
+
+                # Add weighted contribution to each color
+                for color, pip_count in pip_counts.items():
+                    if color in self.color_scores:
+                        pip_weight = pip_count / total_pips
+                        score_contribution = alsa_diff * current_pick * pip_weight
+                        self.color_scores[color] += score_contribution
+
+        except Exception as error:
+            logger.error(error)
+
+    def __update_alsa_color_score_table(self):
+        '''Update the ALSA Color Score table display'''
+        try:
+            if self.alsa_color_score_table is None:
+                return
+
+            # Clear existing rows
+            for row in self.alsa_color_score_table.get_children():
+                self.alsa_color_score_table.delete(row)
+
+            # Color display order: W, U, B, R, G
+            color_order = [
+                constants.CARD_COLOR_SYMBOL_WHITE,
+                constants.CARD_COLOR_SYMBOL_BLUE,
+                constants.CARD_COLOR_SYMBOL_BLACK,
+                constants.CARD_COLOR_SYMBOL_RED,
+                constants.CARD_COLOR_SYMBOL_GREEN
+            ]
+
+            # Add rows for each color
+            for idx, color in enumerate(color_order):
+                color_name = constants.COLOR_NAMES_DICT.get(color, color)
+                score = round(self.color_scores[color], 1)
+
+                # Determine row tag based on color
+                if color == constants.CARD_COLOR_SYMBOL_WHITE:
+                    row_tag = constants.CARD_ROW_COLOR_WHITE_TAG
+                elif color == constants.CARD_COLOR_SYMBOL_BLUE:
+                    row_tag = constants.CARD_ROW_COLOR_BLUE_TAG
+                elif color == constants.CARD_COLOR_SYMBOL_BLACK:
+                    row_tag = constants.CARD_ROW_COLOR_BLACK_TAG
+                elif color == constants.CARD_COLOR_SYMBOL_RED:
+                    row_tag = constants.CARD_ROW_COLOR_RED_TAG
+                elif color == constants.CARD_COLOR_SYMBOL_GREEN:
+                    row_tag = constants.CARD_ROW_COLOR_GREEN_TAG
+                else:
+                    row_tag = constants.BW_ROW_COLOR_ODD_TAG
+
+                self.alsa_color_score_table.insert(
+                    "",
+                    index=idx,
+                    iid=idx,
+                    values=(color_name, score),
+                    tag=(row_tag,)
+                )
+        except Exception as error:
+            logger.error(error)
+
+    def __open_alsa_color_score_window(self):
+        '''Creates the ALSA Color Score window'''
+
+        # Don't open if already open
+        if self.alsa_color_score_window_open:
+            return
+
+        popup = tkinter.Toplevel()
+        popup.wm_title("ALSA Color Score")
+        popup.attributes("-topmost", True)
+        popup.resizable(width=False, height=False)
+        popup.protocol(
+            "WM_DELETE_WINDOW",
+            lambda window=popup: self.__close_alsa_color_score_window(window)
+        )
+
+        try:
+            tkinter.Grid.columnconfigure(popup, 0, weight=1)
+
+            # Table headers
+            headers = {
+                "Color": {"width": .40, "anchor": tkinter.W},
+                "Score": {"width": .60, "anchor": tkinter.CENTER}
+            }
+
+            # Create table
+            table_frame = tkinter.Frame(popup)
+            self.alsa_color_score_table = self._create_header(
+                "alsa_color_score_table",
+                table_frame,
+                5,  # Fixed height for 5 colors
+                self.fonts_dict["All.TableRow"],
+                headers,
+                self._scale_value(300),
+                True,  # include_header
+                True,  # fixed_width
+                "AlsaColorScore.Treeview",
+                False  # stretch_enabled
+            )
+
+            # Reset button
+            reset_button = Button(
+                popup,
+                text="Reset Scores",
+                command=self.__reset_color_scores
+            )
+
+            # Layout
+            reset_button.grid(row=0, column=0, sticky="nsew")
+            table_frame.grid(row=1, column=0, sticky="nsew")
+            self.alsa_color_score_table.pack(expand=True, fill="both")
+
+            # Position window
+            location_x, location_y = identify_safe_coordinates(
+                self.root,
+                self._scale_value(320),
+                self._scale_value(250),
+                self._scale_value(250),
+                self._scale_value(0)
+            )
+            popup.wm_geometry(f"+{location_x}+{location_y}")
+
+            # Initial update
+            self.__update_alsa_color_score_table()
+            self.alsa_color_score_window_open = True
+            popup.update()
+
+        except Exception as error:
+            logger.error(error)
 
     def __close_suggest_deck_window(self, popup):
         '''Clear deck suggester data when the card compare window is closed'''
@@ -3004,6 +3217,13 @@ class Overlay(ScaledWindow):
     def __reset_draft(self, full_reset):
         '''Clear all of the stored draft data (i.e., draft type, draft set, collected cards, etc.)'''
         self.draft.clear_draft(full_reset)
+
+        # Reset color scores when starting a new draft
+        if full_reset:
+            for color in self.color_scores:
+                self.color_scores[color] = 0.0
+            self.last_processed_pick = 0
+            self.__update_alsa_color_score_table()
 
     def __update_overlay_build(self):
         '''Checks the version.txt file in Github to determine if a new version of the application is available'''
