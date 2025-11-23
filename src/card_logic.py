@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import logging
 import math
 import copy
+import re
 import numpy
 from src import constants
 from src.logger import create_logger
@@ -789,6 +790,53 @@ def get_card_colors(mana_cost):
 
     except Exception as error:
         logger.error(error)
+    return colors
+
+
+def extract_colored_pips(mana_cost):
+    """Parse a mana cost string and return a dictionary of color: quantity.
+
+    Regular colored pips count as 1.
+    Hybrid mana (e.g., {W/U}) counts as 0.5 for each color.
+    Phyrexian hybrid (e.g., {G/P}) counts as 0.5 for that color.
+    Two-generic hybrid (e.g., {2/W}) counts as 0.5 for that color.
+
+    Args:
+        mana_cost: A mana cost string like "{1}{W}{W}" or "{W/U}{G/P}{2/B}"
+
+    Returns:
+        A dictionary mapping color symbols to their pip count.
+        Example: "{1}{W}{W}" -> {"W": 2}
+        Example: "{W/U}{W}" -> {"W": 1.5, "U": 0.5}
+    """
+    colors = {}
+
+    try:
+        if not mana_cost:
+            return colors
+
+        # Find all mana symbols within curly braces
+        symbols = re.findall(r'\{([^}]+)\}', mana_cost)
+
+        for symbol in symbols:
+            if '/' in symbol:
+                # Hybrid mana symbol (e.g., W/U, 2/W, G/P)
+                parts = symbol.split('/')
+                for part in parts:
+                    part = part.upper()
+                    if part in constants.CARD_COLORS:
+                        colors[part] = colors.get(part, 0) + 0.5
+                    # Skip numeric parts (like "2" in 2/W) and P (Phyrexian)
+            else:
+                # Regular mana symbol
+                symbol_upper = symbol.upper()
+                if symbol_upper in constants.CARD_COLORS:
+                    colors[symbol_upper] = colors.get(symbol_upper, 0) + 1
+                # Skip colorless/generic mana (numbers, C, X, etc.)
+
+    except Exception as error:
+        logger.error(error)
+
     return colors
 
 
