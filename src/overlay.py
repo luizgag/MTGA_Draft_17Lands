@@ -381,6 +381,7 @@ class Overlay(ScaledWindow):
         self.data_source_checkbox_value = tkinter.IntVar(self.root)
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
+        self.alsa_color_score_checkbox_value = tkinter.IntVar(self.root)
 
         self.taken_type_creature_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_creature_checkbox_value.set(True)
@@ -1421,6 +1422,8 @@ class Overlay(ScaledWindow):
                 self.deck_filter_checkbox_value.get())
             self.configuration.settings.refresh_button_enabled = bool(
                 self.refresh_button_checkbox_value.get())
+            self.configuration.settings.alsa_color_score_enabled = bool(
+                self.alsa_color_score_checkbox_value.get())
             write_configuration(self.configuration)
         except Exception as error:
             logger.error(error)
@@ -1506,6 +1509,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.deck_filter_enabled)
             self.refresh_button_checkbox_value.set(
                 self.configuration.settings.refresh_button_enabled)
+            self.alsa_color_score_checkbox_value.set(
+                self.configuration.settings.alsa_color_score_enabled)
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -2601,6 +2606,13 @@ class Overlay(ScaledWindow):
                                                   onvalue=1,
                                                   offvalue=0)
 
+            alsa_color_score_label = Label(
+                popup, text="Enable ALSA Color Score Window:", style="MainSectionsBold.TLabel", anchor="e")
+            alsa_color_score_checkbox = Checkbutton(popup,
+                                                    variable=self.alsa_color_score_checkbox_value,
+                                                    onvalue=1,
+                                                    offvalue=0)
+
             self.column_2_options = OptionMenu(popup, self.column_2_selection, self.column_2_selection.get(
             ), *self.column_2_list, style="All.TMenubutton")
             self.column_2_options.config(width=15)
@@ -2748,6 +2760,14 @@ class Overlay(ScaledWindow):
                 row=row_count, column=0, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             refresh_button_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
+            alsa_color_score_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            alsa_color_score_checkbox.grid(
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
