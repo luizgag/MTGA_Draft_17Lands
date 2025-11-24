@@ -2147,14 +2147,17 @@ class Overlay(ScaledWindow):
         self.__update_alsa_color_score_table()
 
     def __update_color_scores(self, pack_cards, current_pack, current_pick):
-        '''Update ALSA color scores based on current pack
+        '''Update ALSA/ATA color scores based on current pack
 
         Scoring formula:
         - Single-color: score = base / pip_count_for_color
         - Multi-color regular: inverse pip weighting, normalized to base
         - Multi-color hybrid-only: base / total_hybrid_pips / num_colors
 
-        Where base = alsa_diff * pick_number
+        Where base = (current_pick * (current_pick - ata)) / max(ata, 1.0)
+
+        This formula rewards seeing cards later than their ATA (open color signal)
+        and penalizes seeing cards earlier than their ATA (contested color).
         '''
         # Skip P1P1 (pick 1 of any pack at pick position 1)
         if current_pick <= 1:
@@ -2168,7 +2171,7 @@ class Overlay(ScaledWindow):
         self.last_processed_pick = total_pick
 
         try:
-            # Get ALSA diff for each card
+            # Get ATA (Average Taken At) for each card
             result_class = CardResult(
                 self.set_metrics,
                 self.tier_data,
@@ -2176,8 +2179,8 @@ class Overlay(ScaledWindow):
                 current_pick
             )
 
-            # Include alsa_diff in fields
-            fields = [constants.DATA_FIELD_ALSA_DIFF]
+            # Request ATA field
+            fields = [constants.DATA_FIELD_ATA]
             result_list = result_class.return_results(
                 pack_cards,
                 self.deck_filter_selection.get(),
@@ -2186,13 +2189,17 @@ class Overlay(ScaledWindow):
 
             # Calculate scores for this pick
             for card in result_list:
-                alsa_diff_str = card["results"][0]  # First field is ALSA_DIFF
+                ata_str = card["results"][0]  # First field is ATA
 
-                # Skip if no valid ALSA diff
-                if alsa_diff_str == constants.RESULT_UNKNOWN_STRING:
+                # Skip if no valid ATA (checks for predefined unknown string)
+                if ata_str == constants.RESULT_UNKNOWN_STRING:
                     continue
 
-                alsa_diff = float(alsa_diff_str)
+                # Robust float conversion to handle 'NA' or other non-numeric data
+                try:
+                    ata = float(ata_str)
+                except ValueError:
+                    continue
 
                 # Get mana cost and extract colored pips
                 mana_cost = card.get(constants.DATA_FIELD_MANA_COST, "")
@@ -2202,7 +2209,13 @@ class Overlay(ScaledWindow):
                 if not pip_counts:
                     continue
 
-                base = alsa_diff * current_pick
+                # New formula: Score = (Pick * (Pick - ATA)) / max(ATA, 1.0)
+                # - Positive when current_pick > ata (card seen later than expected = open)
+                # - Negative when current_pick < ata (card seen earlier than expected = contested)
+                # - max(ata, 1.0) prevents division by zero and caps extreme outliers
+                safe_ata = max(ata, 1.0)
+                base = (current_pick * (current_pick - ata)) / safe_ata
+
                 contributions = self.__calculate_color_contributions(base, pip_counts)
 
                 for color, contribution in contributions.items():
@@ -2254,7 +2267,7 @@ class Overlay(ScaledWindow):
                 for color, weight in inverse_weights.items()}
 
     def __update_alsa_color_score_table(self):
-        '''Update the ALSA Color Score table display'''
+        '''Update the ALSA Color Score table display with normalized scores'''
         try:
             if self.alsa_color_score_table is None:
                 return
@@ -2272,10 +2285,24 @@ class Overlay(ScaledWindow):
                 constants.CARD_COLOR_SYMBOL_GREEN
             ]
 
+            # Calculate total absolute score for normalization
+            # Use absolute values since scores can be negative (contested colors)
+            total_abs_score = sum(abs(score) for score in self.color_scores.values())
+
             # Add rows for each color
             for idx, color in enumerate(color_order):
                 color_name = constants.COLOR_NAMES_DICT.get(color, color)
-                score = round(self.color_scores[color], 1)
+                raw_score = self.color_scores.get(color, 0.0)
+
+                # Calculate normalized score (percentage of total absolute contribution)
+                if total_abs_score > 0:
+                    # Normalize using absolute value for relative weight
+                    # but preserve sign in display to show open vs contested
+                    percentage = (raw_score / total_abs_score) * 100
+                    score_display = f"{percentage:.1f}%"
+                else:
+                    # Fallback if total score is 0 (start of draft)
+                    score_display = "0.0%"
 
                 # Determine row tag based on color
                 if color == constants.CARD_COLOR_SYMBOL_WHITE:
@@ -2295,7 +2322,7 @@ class Overlay(ScaledWindow):
                     "",
                     index=idx,
                     iid=idx,
-                    values=(color_name, score),
+                    values=(color_name, score_display),
                     tag=(row_tag,)
                 )
         except Exception as error:
