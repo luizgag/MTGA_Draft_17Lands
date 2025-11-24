@@ -2168,6 +2168,12 @@ class Overlay(ScaledWindow):
 
         # Calculate a unique pick identifier to avoid double processing
         total_pick = (current_pack - 1) * 15 + current_pick
+
+        # Detect new draft: if total_pick < last_processed_pick, we've started a new draft
+        if total_pick < self.last_processed_pick:
+            logger.info(f"[ALSA DEBUG] New draft detected: total_pick ({total_pick}) < last_processed_pick ({self.last_processed_pick}), resetting scores")
+            self.__reset_color_scores()
+
         if total_pick <= self.last_processed_pick:
             logger.info(f"[ALSA DEBUG] Skipping: total_pick ({total_pick}) <= last_processed_pick ({self.last_processed_pick})")
             return
