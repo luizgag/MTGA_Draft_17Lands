@@ -57,6 +57,7 @@ class Settings(BaseModel):
     taken_wheel_enabled: bool = False
     alsa_color_score_enabled: bool = False
     arena_log_location: str = ""
+    min_game_threshold: int = 0
 
     @field_validator('deck_filter')
     @classmethod

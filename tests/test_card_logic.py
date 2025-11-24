@@ -133,3 +133,189 @@ EXTRACT_PIPS_TESTS = [
 def test_extract_colored_pips(mana_cost, expected_pips):
     result = extract_colored_pips(mana_cost)
     assert result == expected_pips
+
+
+# Test cases for Best Performance filters
+def test_best_gihwr_basic():
+    """Test basic GIHWR best performance selection"""
+    # Create a mock card with different GIHWR values for different colors
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gihwr": 50.0,
+                "gih": 100
+            },
+            "W": {
+                "gihwr": 55.0,
+                "gih": 50
+            },
+            "U": {
+                "gihwr": 60.0,  # Highest
+                "gih": 50
+            },
+            "B": {
+                "gihwr": 52.0,
+                "gih": 50
+            }
+        }
+    }
+
+    config = Configuration(settings=Settings(min_game_threshold=0))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    # Test that Best GIHWR column shows "U" (the best color)
+    result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
+    assert result_list[0]["results"][0] == "U"
+
+
+def test_best_gpwr_basic():
+    """Test basic GPWR best performance selection"""
+    # Create a mock card with different GPWR values for different colors
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gpwr": 50.0,
+                "ngp": 100
+            },
+            "W": {
+                "gpwr": 55.0,
+                "ngp": 50
+            },
+            "R": {
+                "gpwr": 58.0,  # Highest
+                "ngp": 50
+            },
+            "G": {
+                "gpwr": 52.0,
+                "ngp": 50
+            }
+        }
+    }
+
+    config = Configuration(settings=Settings(min_game_threshold=0))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    # Test that Best GPWR column shows "R" (the best color)
+    result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GPWR])
+    assert result_list[0]["results"][0] == "R"
+
+
+def test_best_gihwr_with_threshold():
+    """Test GIHWR best performance with minimum game threshold"""
+    # Create a mock card where the highest WR color has low games
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gihwr": 50.0,
+                "gih": 1000
+            },
+            "W": {
+                "gihwr": 70.0,  # Highest WR but only 30 games
+                "gih": 30
+            },
+            "U": {
+                "gihwr": 55.0,  # Lower WR but 100 games
+                "gih": 100
+            }
+        }
+    }
+
+    # With threshold of 50, W should be ignored and U selected
+    config = Configuration(settings=Settings(min_game_threshold=50))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
+    assert result_list[0]["results"][0] == "U"
+
+
+def test_best_gihwr_fallback_to_all_decks():
+    """Test fallback to All Decks when no color meets threshold"""
+    # Create a mock card where all colors have low game counts
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gihwr": 50.0,
+                "gih": 1000
+            },
+            "W": {
+                "gihwr": 60.0,
+                "gih": 30
+            },
+            "U": {
+                "gihwr": 55.0,
+                "gih": 40
+            }
+        }
+    }
+
+    # With threshold of 100, both colors should be ignored, falling back to "All Decks"
+    config = Configuration(settings=Settings(min_game_threshold=100))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
+    assert result_list[0]["results"][0] == constants.FILTER_OPTION_ALL_DECKS
+
+
+def test_best_gpwr_fallback_to_all_decks():
+    """Test fallback to All Decks for GPWR when no color meets threshold"""
+    # Create a mock card where all colors have low game counts
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gpwr": 50.0,
+                "ngp": 1000
+            },
+            "R": {
+                "gpwr": 60.0,
+                "ngp": 30
+            },
+            "G": {
+                "gpwr": 55.0,
+                "ngp": 40
+            }
+        }
+    }
+
+    # With threshold of 100, both colors should be ignored, falling back to "All Decks"
+    config = Configuration(settings=Settings(min_game_threshold=100))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GPWR])
+    assert result_list[0]["results"][0] == constants.FILTER_OPTION_ALL_DECKS
+
+
+def test_best_gihwr_filter_usage():
+    """Test using Best GIHWR as a deck filter and retrieving ALSA for that color"""
+    # Create a mock card with different GIHWR and ALSA values for different colors
+    card = {
+        "name": "Test Card",
+        "deck_colors": {
+            "All Decks": {
+                "gihwr": 50.0,
+                "gih": 100,
+                "alsa": 5.0
+            },
+            "W": {
+                "gihwr": 55.0,
+                "gih": 50,
+                "alsa": 6.0
+            },
+            "U": {
+                "gihwr": 60.0,  # Highest
+                "gih": 50,
+                "alsa": 7.0  # Should return this ALSA
+            }
+        }
+    }
+
+    config = Configuration(settings=Settings(min_game_threshold=0))
+    card_result = CardResult(SetMetrics(None), None, config, 1)
+
+    # When using Best GIHWR filter, should get ALSA from U (the best GIHWR color)
+    result_list = card_result.return_results([card], [constants.FILTER_OPTION_BEST_GIHWR], [constants.DATA_FIELD_ALSA])
+    assert result_list[0]["results"][0] == 7.0
