@@ -2159,16 +2159,21 @@ class Overlay(ScaledWindow):
         This formula rewards seeing cards later than their ATA (open color signal)
         and penalizes seeing cards earlier than their ATA (contested color).
         '''
+        logger.info(f"[ALSA DEBUG] __update_color_scores called: pack={current_pack}, pick={current_pick}, last_processed_pick={self.last_processed_pick}")
+
         # Skip P1P1 (pick 1 of any pack at pick position 1)
         if current_pick <= 1:
+            logger.info("[ALSA DEBUG] Skipping: current_pick <= 1")
             return
 
         # Calculate a unique pick identifier to avoid double processing
         total_pick = (current_pack - 1) * 15 + current_pick
         if total_pick <= self.last_processed_pick:
+            logger.info(f"[ALSA DEBUG] Skipping: total_pick ({total_pick}) <= last_processed_pick ({self.last_processed_pick})")
             return
 
         self.last_processed_pick = total_pick
+        logger.info(f"[ALSA DEBUG] Processing pick: total_pick={total_pick}, pack_cards count={len(pack_cards) if pack_cards else 0}")
 
         try:
             # Get ATA (Average Taken At) for each card
@@ -2188,17 +2193,21 @@ class Overlay(ScaledWindow):
             )
 
             # Calculate scores for this pick
+            logger.info(f"[ALSA DEBUG] result_list count: {len(result_list)}")
             for card in result_list:
+                card_name = card.get(constants.DATA_FIELD_NAME, "Unknown")
                 ata_str = card["results"][0]  # First field is ATA
 
                 # Skip if no valid ATA (checks for predefined unknown string)
                 if ata_str == constants.RESULT_UNKNOWN_STRING:
+                    logger.info(f"[ALSA DEBUG] Card '{card_name}': skipped (no valid ATA)")
                     continue
 
                 # Robust float conversion to handle 'NA' or other non-numeric data
                 try:
                     ata = float(ata_str)
                 except ValueError:
+                    logger.info(f"[ALSA DEBUG] Card '{card_name}': skipped (ATA not numeric: '{ata_str}')")
                     continue
 
                 # Get mana cost and extract colored pips
@@ -2207,6 +2216,7 @@ class Overlay(ScaledWindow):
 
                 # Skip if no colored pips (colorless cards)
                 if not pip_counts:
+                    logger.info(f"[ALSA DEBUG] Card '{card_name}': skipped (no colored pips, mana_cost='{mana_cost}')")
                     continue
 
                 # New formula: Score = (Pick * (Pick - ATA)) / max(ATA, 1.0)
@@ -2218,12 +2228,18 @@ class Overlay(ScaledWindow):
 
                 contributions = self.__calculate_color_contributions(base, pip_counts)
 
+                logger.info(f"[ALSA DEBUG] Card '{card_name}': ATA={ata}, mana_cost='{mana_cost}', pip_counts={pip_counts}, base={base:.4f}, contributions={contributions}")
+
                 for color, contribution in contributions.items():
                     if color in self.color_scores:
                         self.color_scores[color] += contribution
 
+            logger.info(f"[ALSA DEBUG] After processing, color_scores={self.color_scores}")
+
         except Exception as error:
-            logger.error(error)
+            logger.error(f"[ALSA DEBUG] Exception in __update_color_scores: {error}")
+            import traceback
+            logger.error(f"[ALSA DEBUG] Traceback: {traceback.format_exc()}")
 
     def __calculate_color_contributions(self, base, pip_counts):
         '''Calculate color contributions with inverse pip weighting
@@ -2237,6 +2253,7 @@ class Overlay(ScaledWindow):
         - {W/B}{W/B}: W = 3, B = 3 (hybrid, 1 pip total)
         - {W/B}{W/B}{W/B}: W = 2, B = 2 (hybrid, 1.5 pips total)
         '''
+        logger.debug(f"[ALSA DEBUG] __calculate_color_contributions: base={base}, pip_counts={pip_counts}")
         if not pip_counts:
             return {}
 
@@ -2268,8 +2285,10 @@ class Overlay(ScaledWindow):
 
     def __update_alsa_color_score_table(self):
         '''Update the ALSA Color Score table display with normalized scores'''
+        logger.info(f"[ALSA DEBUG] __update_alsa_color_score_table called: color_scores={self.color_scores}")
         try:
             if self.alsa_color_score_table is None:
+                logger.info("[ALSA DEBUG] alsa_color_score_table is None, returning early")
                 return
 
             # Clear existing rows
@@ -2288,6 +2307,7 @@ class Overlay(ScaledWindow):
             # Calculate total absolute score for normalization
             # Use absolute values since scores can be negative (contested colors)
             total_abs_score = sum(abs(score) for score in self.color_scores.values())
+            logger.info(f"[ALSA DEBUG] total_abs_score={total_abs_score}")
 
             # Add rows for each color
             for idx, color in enumerate(color_order):
