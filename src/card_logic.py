@@ -60,6 +60,12 @@ class CardResult:
                         selected_card["results"][count] = self.__process_alsa_diff(card)
                     elif option == constants.DATA_FIELD_ATA:
                         selected_card["results"][count] = self.__process_ata(card)
+                    elif option == constants.DATA_FIELD_BEST_GIHWR:
+                        selected_card["results"][count] = self.__process_best_performance(
+                            card, constants.DATA_FIELD_GIHWR)
+                    elif option == constants.DATA_FIELD_BEST_GPWR:
+                        selected_card["results"][count] = self.__process_best_performance(
+                            card, constants.DATA_FIELD_GPWR)
                     elif option in card:
                         selected_card["results"][count] = card[option]
                     else:
@@ -182,11 +188,73 @@ class CardResult:
 
         return result
 
+    def __process_best_performance(self, card, metric):
+        """Determine the best color for a card based on the specified metric (GIHWR or GPWR)"""
+        result = constants.FILTER_OPTION_ALL_DECKS
+
+        try:
+            if constants.DATA_FIELD_DECK_COLORS not in card:
+                return result
+
+            # Determine the game count field based on metric
+            count_field = constants.WIN_RATE_FIELDS_DICT.get(metric)
+            if not count_field:
+                return result
+
+            # Get minimum game threshold from configuration
+            min_threshold = self.configuration.settings.min_game_threshold
+
+            best_value = 0
+            best_color = None
+
+            # Iterate through all deck colors (excluding "All Decks")
+            for color in constants.DECK_COLORS:
+                if color == constants.FILTER_OPTION_ALL_DECKS:
+                    continue
+
+                if color not in card[constants.DATA_FIELD_DECK_COLORS]:
+                    continue
+
+                color_data = card[constants.DATA_FIELD_DECK_COLORS][color]
+
+                # Check if game count meets threshold
+                game_count = color_data.get(count_field, 0)
+                if game_count < min_threshold:
+                    continue
+
+                # Get the metric value (GIHWR or GPWR)
+                metric_value = color_data.get(metric, 0)
+
+                # Update best if this color has a higher value
+                if metric_value > best_value:
+                    best_value = metric_value
+                    best_color = color
+
+            # If no color qualified, return "All Decks"
+            if best_color:
+                result = best_color
+
+        except Exception as error:
+            logger.error(error)
+
+        return result
+
     def __process_filter_fields(self, card, option, colors):
         """Retrieve win rate result based on the application settings"""
         result = "NA"
 
         try:
+            # Handle "Best GIHWR" and "Best GPWR" filter options
+            if len(colors) == 1 and colors[0] in [constants.FILTER_OPTION_BEST_GIHWR, constants.FILTER_OPTION_BEST_GPWR]:
+                # Determine which metric to use
+                metric = constants.DATA_FIELD_GIHWR if colors[0] == constants.FILTER_OPTION_BEST_GIHWR else constants.DATA_FIELD_GPWR
+
+                # Get the best color for this card based on the metric
+                best_color = self.__process_best_performance(card, metric)
+
+                # Now retrieve the requested statistic for that color
+                colors = [best_color]
+
             rated_colors = []
             for color in colors:
                 if constants.DATA_FIELD_DECK_COLORS in card \
@@ -401,6 +469,10 @@ def filter_options(deck, option_selection, metrics, configuration):
     try:
         if constants.FILTER_OPTION_AUTO in option_selection:
             filtered_color_list = auto_colors(deck, 5, metrics, configuration)
+        elif option_selection in [constants.FILTER_OPTION_BEST_GIHWR, constants.FILTER_OPTION_BEST_GPWR]:
+            # For "Best GIHWR" and "Best GPWR", return the option itself
+            # The actual color selection will be handled per card in __process_filter_fields
+            filtered_color_list = [option_selection]
         else:
             filtered_color_list = [option_selection]
     except Exception as error:

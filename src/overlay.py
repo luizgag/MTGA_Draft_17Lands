@@ -382,6 +382,7 @@ class Overlay(ScaledWindow):
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
         self.alsa_color_score_checkbox_value = tkinter.IntVar(self.root)
+        self.min_game_threshold_value = tkinter.StringVar(self.root)
 
         self.taken_type_creature_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_creature_checkbox_value.set(True)
@@ -1424,6 +1425,14 @@ class Overlay(ScaledWindow):
                 self.refresh_button_checkbox_value.get())
             self.configuration.settings.alsa_color_score_enabled = bool(
                 self.alsa_color_score_checkbox_value.get())
+
+            # Parse min_game_threshold as integer, default to 0 if invalid
+            try:
+                self.configuration.settings.min_game_threshold = int(
+                    self.min_game_threshold_value.get())
+            except ValueError:
+                self.configuration.settings.min_game_threshold = 0
+
             write_configuration(self.configuration)
         except Exception as error:
             logger.error(error)
@@ -1511,6 +1520,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.refresh_button_enabled)
             self.alsa_color_score_checkbox_value.set(
                 self.configuration.settings.alsa_color_score_enabled)
+            self.min_game_threshold_value.set(
+                str(self.configuration.settings.min_game_threshold))
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -2666,6 +2677,12 @@ class Overlay(ScaledWindow):
                                                     onvalue=1,
                                                     offvalue=0)
 
+            min_game_threshold_label = Label(
+                popup, text="Min Game Threshold:", style="MainSectionsBold.TLabel", anchor="e")
+            min_game_threshold_entry = Entry(popup,
+                                             textvariable=self.min_game_threshold_value,
+                                             width=15)
+
             self.column_2_options = OptionMenu(popup, self.column_2_selection, self.column_2_selection.get(
             ), *self.column_2_list, style="All.TMenubutton")
             self.column_2_options.config(width=15)
@@ -2821,6 +2838,14 @@ class Overlay(ScaledWindow):
                 row=row_count, column=0, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             alsa_color_score_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
+            min_game_threshold_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            min_game_threshold_entry.grid(
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
