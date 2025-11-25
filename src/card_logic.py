@@ -55,6 +55,12 @@ class CardResult:
                     elif option == constants.DATA_FIELD_WHEEL:
                         selected_card["results"][count] = self.__process_wheel_normalized(
                             card, wheel_sum)
+                    elif option == constants.DATA_FIELD_BEST_GIHWR:
+                        selected_card["results"][count] = self.__process_best_performance(
+                            card, constants.DATA_FIELD_GIHWR)
+                    elif option == constants.DATA_FIELD_BEST_GPWR:
+                        selected_card["results"][count] = self.__process_best_performance(
+                            card, constants.DATA_FIELD_GPWR)
                     elif option in card:
                         selected_card["results"][count] = card[option]
                     else:
@@ -138,6 +144,56 @@ class CardResult:
             result = self.__process_wheel(card)
 
             result = round((result / total_sum)*100, 1) if total_sum > 0 else 0
+        except Exception as error:
+            logger.error(error)
+
+        return result
+
+    def __process_best_performance(self, card, metric):
+        """Determine the best color for a card based on the specified metric (GIHWR or GPWR)"""
+        result = constants.RESULT_UNKNOWN_STRING
+
+        try:
+            if constants.DATA_FIELD_DECK_COLORS not in card:
+                return result
+
+            # Determine the game count field based on metric
+            count_field = constants.WIN_RATE_FIELDS_DICT.get(metric)
+            if not count_field:
+                return result
+
+            best_value = 0
+            best_color = None
+
+            # Iterate through all deck colors (excluding "All Decks")
+            for color in constants.DECK_COLORS:
+                if color == constants.FILTER_OPTION_ALL_DECKS:
+                    continue
+
+                if color not in card[constants.DATA_FIELD_DECK_COLORS]:
+                    continue
+
+                color_data = card[constants.DATA_FIELD_DECK_COLORS][color]
+
+                # Get the metric value (GIHWR or GPWR)
+                metric_value = color_data.get(metric, 0)
+
+                # Update best if this color has a higher value
+                if metric_value > best_value:
+                    best_value = metric_value
+                    best_color = color
+
+            # If a color qualified, format the result
+            if best_color:
+                formatted_value = self.__format_win_rate(
+                    card, metric, count_field, best_color)
+                
+                # If the format is percentage, add the % symbol
+                if self.configuration.settings.result_format == constants.RESULT_FORMAT_WIN_RATE:
+                     formatted_value = f"{formatted_value}%"
+                
+                result = f"{best_color} ({formatted_value})"
+
         except Exception as error:
             logger.error(error)
 

@@ -74,6 +74,8 @@ DATA_FIELD_NGND = "ngnd"
 DATA_FIELD_GDWR = "gdwr"
 DATA_FIELD_NGD = "ngd"
 DATA_FIELD_WHEEL = "wheel"
+DATA_FIELD_BEST_GIHWR = "best_gihwr"
+DATA_FIELD_BEST_GPWR = "best_gpwr"
 
 DATA_SECTION_IMAGES = "image"
 DATA_SECTION_RATINGS = "ratings"
@@ -131,6 +133,8 @@ FIELD_LABEL_DISABLED = "DISABLED: Remove Column"
 FIELD_LABEL_COUNT = "COUNT: Total Card Count"
 FIELD_LABEL_WHEEL = "WHEEL: Probability of Wheeling"
 FIELD_LABEL_GDWR = "GDWR: Games Drawn Win Rate"
+FIELD_LABEL_BEST_GIHWR = "Best GIHWR: Best Color GIHWR"
+FIELD_LABEL_BEST_GPWR = "Best GPWR: Best Color GPWR"
 
 DATA_SET_VERSION_3 = 3.0
 
