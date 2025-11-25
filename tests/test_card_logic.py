@@ -164,9 +164,9 @@ def test_best_gihwr_basic():
     config = Configuration(settings=Settings(min_game_threshold=0))
     card_result = CardResult(SetMetrics(None), None, config, 1)
 
-    # Test that Best GIHWR column shows "U" (the best color)
+    # Test that Best GIHWR column shows "U: 60.0" (the best color with value)
     result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
-    assert result_list[0]["results"][0] == "U"
+    assert result_list[0]["results"][0] == "U: 60.0"
 
 
 def test_best_gpwr_basic():
@@ -197,9 +197,9 @@ def test_best_gpwr_basic():
     config = Configuration(settings=Settings(min_game_threshold=0))
     card_result = CardResult(SetMetrics(None), None, config, 1)
 
-    # Test that Best GPWR column shows "R" (the best color)
+    # Test that Best GPWR column shows "R: 58.0" (the best color with value)
     result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GPWR])
-    assert result_list[0]["results"][0] == "R"
+    assert result_list[0]["results"][0] == "R: 58.0"
 
 
 def test_best_gihwr_with_threshold():
@@ -228,7 +228,7 @@ def test_best_gihwr_with_threshold():
     card_result = CardResult(SetMetrics(None), None, config, 1)
 
     result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
-    assert result_list[0]["results"][0] == "U"
+    assert result_list[0]["results"][0] == "U: 55.0"
 
 
 def test_best_gihwr_fallback_to_all_decks():
@@ -257,7 +257,7 @@ def test_best_gihwr_fallback_to_all_decks():
     card_result = CardResult(SetMetrics(None), None, config, 1)
 
     result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GIHWR])
-    assert result_list[0]["results"][0] == constants.FILTER_OPTION_ALL_DECKS
+    assert result_list[0]["results"][0] == "All Decks: 50.0"
 
 
 def test_best_gpwr_fallback_to_all_decks():
@@ -286,7 +286,7 @@ def test_best_gpwr_fallback_to_all_decks():
     card_result = CardResult(SetMetrics(None), None, config, 1)
 
     result_list = card_result.return_results([card], ["All Decks"], [constants.DATA_FIELD_BEST_GPWR])
-    assert result_list[0]["results"][0] == constants.FILTER_OPTION_ALL_DECKS
+    assert result_list[0]["results"][0] == "All Decks: 50.0"
 
 
 def test_best_gihwr_filter_usage():

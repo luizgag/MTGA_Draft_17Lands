@@ -188,8 +188,8 @@ class CardResult:
 
         return result
 
-    def __process_best_performance(self, card, metric):
-        """Determine the best color for a card based on the specified metric (GIHWR or GPWR)"""
+    def __get_best_color(self, card, metric):
+        """Helper method to determine the best color for a card based on the specified metric (GIHWR or GPWR)"""
         result = constants.FILTER_OPTION_ALL_DECKS
 
         try:
@@ -239,6 +239,30 @@ class CardResult:
 
         return result
 
+    def __process_best_performance(self, card, metric):
+        """Determine the best color for a card based on the specified metric (GIHWR or GPWR) and return color with formatted value"""
+        result = constants.RESULT_UNKNOWN_STRING
+
+        try:
+            # Get the best color
+            best_color = self.__get_best_color(card, metric)
+
+            # Determine the game count field based on metric
+            count_field = constants.WIN_RATE_FIELDS_DICT.get(metric)
+            if not count_field:
+                return result
+
+            # Format the value according to user's display format preference
+            formatted_value = self.__format_win_rate(card, metric, count_field, best_color)
+
+            # Return color name with formatted value
+            result = f"{best_color}: {formatted_value}"
+
+        except Exception as error:
+            logger.error(error)
+
+        return result
+
     def __process_filter_fields(self, card, option, colors):
         """Retrieve win rate result based on the application settings"""
         result = "NA"
@@ -250,7 +274,7 @@ class CardResult:
                 metric = constants.DATA_FIELD_GIHWR if colors[0] == constants.FILTER_OPTION_BEST_GIHWR else constants.DATA_FIELD_GPWR
 
                 # Get the best color for this card based on the metric
-                best_color = self.__process_best_performance(card, metric)
+                best_color = self.__get_best_color(card, metric)
 
                 # Now retrieve the requested statistic for that color
                 colors = [best_color]
