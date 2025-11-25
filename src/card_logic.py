@@ -184,10 +184,30 @@ class CardResult:
             best_formatted_result = "NA"
             best_color = "NA"
             
+            # Calculate total games for dynamic filtering
+            total_games = 0
+            if constants.DATA_FIELD_DECK_COLORS in card:
+                # Try to get total games from "All Decks" first
+                if constants.FILTER_OPTION_ALL_DECKS in card[constants.DATA_FIELD_DECK_COLORS] and \
+                   count_field in card[constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]:
+                    total_games = card[constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS][count_field]
+                else:
+                    # Fallback: sum individual colors
+                    for color, data in card[constants.DATA_FIELD_DECK_COLORS].items():
+                        if color != constants.FILTER_OPTION_ALL_DECKS and count_field in data:
+                            total_games += data[count_field]
+
             if constants.DATA_FIELD_DECK_COLORS in card:
                 for color, data in card[constants.DATA_FIELD_DECK_COLORS].items():
                     # Ignore "All Decks" and check if the target field exists
-                    if color != constants.FILTER_OPTION_ALL_DECKS and target_field in data:
+                    if color != constants.FILTER_OPTION_ALL_DECKS and target_field in data and count_field in data:
+                        
+                        # Dynamic Filtering: Ignore if < threshold% of total games or < 10 games
+                        game_count = data[count_field]
+                        threshold = self.configuration.settings.best_in_column_threshold / 100.0
+                        if game_count < 10 or (total_games > 0 and (game_count / total_games) < threshold):
+                            continue
+
                         # Calculate the formatted result (Rating, Grade, or %)
                         formatted_result = self.__format_win_rate(card, target_field, count_field, color)
                         

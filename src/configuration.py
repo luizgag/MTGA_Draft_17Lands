@@ -56,6 +56,7 @@ class Settings(BaseModel):
     taken_iwd_enabled: bool = False
     taken_wheel_enabled: bool = False
     arena_log_location: str = ""
+    best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
 
     @field_validator('deck_filter')
     @classmethod
