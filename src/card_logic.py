@@ -240,7 +240,7 @@ class CardResult:
         return result
 
     def __process_best_performance(self, card, metric):
-        """Determine the best color for a card based on the specified metric (GIHWR or GPWR) and return color with formatted value"""
+        """Determine the best color for a card based on the specified metric (GIHWR or GPWR) and return formatted value with color"""
         result = constants.RESULT_UNKNOWN_STRING
 
         try:
@@ -255,8 +255,8 @@ class CardResult:
             # Format the value according to user's display format preference
             formatted_value = self.__format_win_rate(card, metric, count_field, best_color)
 
-            # Return color name with formatted value
-            result = f"{best_color}: {formatted_value}"
+            # Return formatted value with color in parentheses for proper sorting
+            result = f"{formatted_value} ({best_color})"
 
         except Exception as error:
             logger.error(error)
