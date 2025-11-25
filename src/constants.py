@@ -163,6 +163,20 @@ DRAFT_LOG_FOLDER = os.path.join(os.getcwd(), "Logs")
 
 DRAFT_DETECTION_CATCH_ALL = ["Draft", "draft"]
 
+COLUMN_5_DEFAULT = FIELD_LABEL_DISABLED
+COLUMN_6_DEFAULT = FIELD_LABEL_DISABLED
+COLUMN_7_DEFAULT = FIELD_LABEL_DISABLED
+
+DECK_FILTER_DEFAULT = FILTER_OPTION_AUTO
+
+UI_SIZE_DEFAULT = "100%"
+BEST_IN_COLUMN_THRESHOLD_DEFAULT = 2.0
+
+DRAFT_LOG_PREFIX = "DraftLog_"
+DRAFT_LOG_FOLDER = os.path.join(os.getcwd(), "Logs")
+
+DRAFT_DETECTION_CATCH_ALL = ["Draft", "draft"]
+
 DRAFT_START_STRING_PREMIER = "[UnityCrossThreadLogger]==> Event_Join "
 DRAFT_PICK_STRING_PREMIER = "[UnityCrossThreadLogger]==> Event_PlayerDraftMakePick "
 DRAFT_PICK_STRING_PREMIER_OLD = "[UnityCrossThreadLogger]==> Draft.MakeHumanDraftPick "
