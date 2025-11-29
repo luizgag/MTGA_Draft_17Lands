@@ -434,10 +434,25 @@ class Overlay(ScaledWindow):
         self.sets_window_open = False
 
         self.deck_colors_option_frame = tkinter.Frame(self.root)
-        self.deck_colors_options = OptionMenu(self.deck_colors_option_frame, self.deck_filter_selection,
-                                              self.deck_filter_selection.get(), *self.deck_filter_list, style="All.TMenubutton")
-        menu = self.root.nametowidget(self.deck_colors_options['menu'])
-        menu.config(font=self.fonts_dict["All.TMenubutton"])
+        # Replace OptionMenu with Listbox for multi-select
+        self.deck_filter_listbox = tkinter.Listbox(
+            self.deck_colors_option_frame,
+            selectmode=tkinter.EXTENDED,  # Allows multi-select with Ctrl/Shift
+            height=6,  # Show 6 items at a time
+            exportselection=False,  # Preserve selection when focus changes
+            font=self.fonts_dict["All.TMenubutton"]
+        )
+        # Add scrollbar for the listbox
+        self.deck_filter_scrollbar = tkinter.Scrollbar(
+            self.deck_colors_option_frame,
+            orient=tkinter.VERTICAL
+        )
+        self.deck_filter_listbox.config(yscrollcommand=self.deck_filter_scrollbar.set)
+        self.deck_filter_scrollbar.config(command=self.deck_filter_listbox.yview)
+
+        # Bind selection event to update configuration
+        self.deck_filter_listbox.bind('<<ListboxSelect>>',
+                                      lambda e: self.__on_deck_filter_change())
 
         self.refresh_button_frame = tkinter.Frame(self.root)
         self.refresh_button = Button(
@@ -544,7 +559,9 @@ class Overlay(ScaledWindow):
         self.data_source_label.pack(expand=True, fill=None, anchor="e")
         self.data_source_options.pack(expand=True, fill=None, anchor="w")
         self.deck_colors_label.pack(expand=True, fill=None, anchor="e")
-        self.deck_colors_options.pack(expand=True, fill=None, anchor="w")
+        # Pack listbox and scrollbar side by side
+        self.deck_filter_listbox.pack(side=tkinter.LEFT, expand=True, fill='both')
+        self.deck_filter_scrollbar.pack(side=tkinter.RIGHT, fill='y')
         self.current_timestamp = 0
         self.previous_timestamp = 0
         self.log_check_id = None
@@ -718,24 +735,18 @@ class Overlay(ScaledWindow):
         if key == KeyCode.from_char(HOTKEY_CTRL_G):
             self.lift_window()
 
-    def __identify_auto_colors(self, cards, selected_option):
-        '''Update the Deck Filter option menu when the Auto option is selected'''
+    def __identify_auto_colors(self, cards, selected_colors):
+        '''Process selected deck colors, expanding Auto selections if needed'''
         filtered_colors = [constants.FILTER_OPTION_ALL_DECKS]
 
         try:
-            #selected_option = self.deck_filter_selection.get()
-            selected_color = self.deck_colors[selected_option]
+            # selected_colors is now a list from __get_selected_deck_colors()
+            # Pass the list directly to filter_options which handles lists
             filtered_colors = filter_options(
-                cards, selected_color, self.set_metrics, self.configuration)
+                cards, selected_colors, self.set_metrics, self.configuration)
 
-            if selected_color == constants.FILTER_OPTION_AUTO:
-                new_key = f"{constants.FILTER_OPTION_AUTO} ({'/'.join(filtered_colors)})"
-                if new_key != selected_option:
-                    self.deck_colors.pop(selected_option)
-                    new_dict = {new_key: constants.FILTER_OPTION_AUTO}
-                    new_dict.update(self.deck_colors)
-                    self.deck_colors = new_dict
-                    self.__update_column_options()
+            # Note: Auto expansion logic has been simplified since filter_options
+            # now handles the Auto option within a list of selections
 
         except Exception as error:
             logger.error(error)
@@ -857,7 +868,7 @@ class Overlay(ScaledWindow):
             taken_cards = self.draft.retrieve_taken_cards()
 
             filtered_colors = self.__identify_auto_colors(
-                taken_cards, self.deck_filter_selection.get())
+                taken_cards, self.__get_selected_deck_colors())
             fields = {"Column1": constants.DATA_FIELD_NAME,
                       "Column2": self.main_options_dict[self.column_2_selection.get()],
                       "Column3": self.main_options_dict[self.column_3_selection.get()],
@@ -1181,11 +1192,8 @@ class Overlay(ScaledWindow):
             if self.column_7_selection.get() not in self.main_options_dict:
                 self.column_7_selection.set(constants.COLUMN_7_DEFAULT)
 
-            if self.deck_filter_selection.get() not in self.deck_colors:
-                selection = [k for k, v in self.deck_colors.items(
-                ) if v == self.configuration.settings.deck_filter]
-                self.deck_filter_selection.set(selection[0] if len(
-                    selection) else constants.DECK_FILTER_DEFAULT)
+            # No longer needed for listbox - selections are managed differently
+            # self.deck_filter_selection is no longer used
 
             if self.taken_filter_selection.get() not in self.deck_colors:
                 selection = [k for k in self.deck_colors.keys(
@@ -1196,8 +1204,8 @@ class Overlay(ScaledWindow):
                 self.taken_type_selection.set(
                     constants.CARD_TYPE_SELECTION_ALL)
 
-            deck_colors_menu = self.deck_colors_options["menu"]
-            deck_colors_menu.delete(0, "end")
+            # Clear and repopulate the listbox instead of menu
+            self.deck_filter_listbox.delete(0, tkinter.END)
             column_2_menu = None
             column_3_menu = None
             column_4_menu = None
@@ -1262,10 +1270,13 @@ class Overlay(ScaledWindow):
                 self.column_6_list.append(key)
                 self.column_7_list.append(key)
 
+            # Populate listbox with deck colors
             for key in self.deck_colors:
-                deck_colors_menu.add_command(label=key,
-                                             command=lambda value=key: self.deck_filter_selection.set(value))
+                self.deck_filter_listbox.insert(tkinter.END, key)
                 self.deck_filter_list.append(key)
+
+            # Restore saved selections after populating
+            self.__restore_deck_filter_selections()
 
         except Exception as error:
             logger.error(error)
@@ -1335,6 +1346,59 @@ class Overlay(ScaledWindow):
 
         return update
 
+    def __get_selected_deck_colors(self):
+        """Retrieve list of selected color combinations from listbox"""
+        selected_colors = []
+
+        try:
+            # Check if listbox has items
+            if self.deck_filter_listbox.size() == 0:
+                return [constants.FILTER_OPTION_ALL_DECKS]
+
+            selected_indices = self.deck_filter_listbox.curselection()
+            deck_color_keys = list(self.deck_colors.keys())
+
+            for index in selected_indices:
+                if index < len(deck_color_keys):
+                    display_name = deck_color_keys[index]
+                    selected_colors.append(self.deck_colors[display_name])
+        except Exception as error:
+            logger.error(error)
+
+        # Default to All Decks if nothing selected
+        if not selected_colors:
+            selected_colors = [constants.FILTER_OPTION_ALL_DECKS]
+
+        return selected_colors
+
+    def __on_deck_filter_change(self):
+        """Handle deck filter selection changes from the listbox"""
+        try:
+            # Update settings and persist configuration
+            self.__update_settings_storage()
+            # Update the overlay to reflect the new selection
+            self.__update_overlay_callback(False, Source.UPDATE)
+        except Exception as error:
+            logger.error(error)
+
+    def __restore_deck_filter_selections(self):
+        """Restore deck filter listbox selections from saved configuration"""
+        try:
+            self.deck_filter_listbox.selection_clear(0, tkinter.END)
+            saved_filters = self.configuration.settings.deck_filter
+
+            for filter_value in saved_filters:
+                # Find the corresponding key in deck_colors
+                matching_keys = [k for k, v in self.deck_colors.items() if v == filter_value]
+                if matching_keys:
+                    # Find the index of this key in the listbox
+                    deck_color_keys = list(self.deck_colors.keys())
+                    if matching_keys[0] in deck_color_keys:
+                        index = deck_color_keys.index(matching_keys[0])
+                        self.deck_filter_listbox.selection_set(index)
+        except Exception as error:
+            logger.error(error)
+
     def __update_settings_storage(self):
         '''Function that transfers settings data from the overlay widgets to a data class'''
         try:
@@ -1356,9 +1420,8 @@ class Overlay(ScaledWindow):
             selection = self.column_7_selection.get()
             self.configuration.settings.column_7 = self.main_options_dict[
                 selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_7_DEFAULT]
-            selection = self.deck_filter_selection.get()
-            self.configuration.settings.deck_filter = self.deck_colors[
-                selection] if selection in self.deck_colors else self.deck_colors[constants.DECK_FILTER_DEFAULT]
+            # Use the new multi-select method for deck_filter
+            self.configuration.settings.deck_filter = self.__get_selected_deck_colors()
             self.configuration.settings.filter_format = self.filter_format_selection.get()
             self.configuration.settings.result_format = self.result_format_selection.get()
             self.configuration.settings.ui_size = self.ui_size_selection.get()
@@ -1441,10 +1504,10 @@ class Overlay(ScaledWindow):
             ) if v == self.configuration.settings.column_7]
             self.column_7_selection.set(selection[0] if len(
                 selection) else constants.COLUMN_7_DEFAULT)
-            selection = [k for k, v in self.deck_colors.items(
-            ) if v == self.configuration.settings.deck_filter]
-            self.deck_filter_selection.set(selection[0] if len(
-                selection) else constants.DECK_FILTER_DEFAULT)
+
+            # NOTE: Listbox selection restoration moved to __restore_deck_filter_selections()
+            # which is called after the listbox is populated in __update_column_options()
+
             self.filter_format_selection.set(
                 self.configuration.settings.filter_format)
             self.result_format_selection.set(
@@ -1524,10 +1587,13 @@ class Overlay(ScaledWindow):
                   "Column5": self.main_options_dict[self.column_5_selection.get()],
                   "Column6": self.main_options_dict[self.column_6_selection.get()],
                   "Column7": self.main_options_dict[self.column_7_selection.get()], }
-        self.__update_pack_table([],  self.deck_filter_selection.get(), fields)
+
+        # Use the new multi-select method instead of the old StringVar
+        selected_colors = self.__get_selected_deck_colors()
+        self.__update_pack_table([], selected_colors, fields)
 
         self.__update_missing_table(
-            [], {}, self.deck_filter_selection.get(), fields)
+            [], {}, selected_colors, fields)
 
         self.root.update()
 
@@ -1552,7 +1618,7 @@ class Overlay(ScaledWindow):
         taken_cards = self.draft.retrieve_taken_cards()
 
         filtered = self.__identify_auto_colors(
-            taken_cards, self.deck_filter_selection.get())
+            taken_cards, self.__get_selected_deck_colors())
         fields = {"Column1": constants.DATA_FIELD_NAME,
                   "Column2": self.main_options_dict[self.column_2_selection.get()],
                   "Column3": self.main_options_dict[self.column_3_selection.get()],
@@ -1951,7 +2017,16 @@ class Overlay(ScaledWindow):
                 popup, highlightbackground="white", highlightthickness=2)
             taken_filter_label = Label(
                 option_frame, text="Deck Filter:", style="MainSectionsBold.TLabel", anchor="w")
-            self.taken_filter_selection.set(self.deck_filter_selection.get())
+
+            # Get the first selected color for the taken filter (it's still single-select)
+            selected_colors = self.__get_selected_deck_colors()
+            if selected_colors:
+                # Find the display name for the first selected color
+                for display_name, color_code in self.deck_colors.items():
+                    if color_code == selected_colors[0]:
+                        self.taken_filter_selection.set(display_name)
+                        break
+
             taken_filter_list = self.deck_filter_list
 
             taken_option = OptionMenu(option_frame, self.taken_filter_selection, self.taken_filter_selection.get(
@@ -2962,8 +3037,7 @@ class Overlay(ScaledWindow):
                     "w", self.__update_source_callback)),
                 (self.result_format_selection, lambda: self.result_format_selection.trace(
                     "w", self.__update_source_callback)),
-                (self.deck_filter_selection, lambda: self.deck_filter_selection.trace(
-                    "w", self.__update_source_callback)),
+                # deck_filter_selection trace removed - Listbox now uses <<ListboxSelect>> binding
                 (self.taken_alsa_checkbox_value, lambda: self.taken_alsa_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.taken_ata_checkbox_value, lambda: self.taken_ata_checkbox_value.trace(
