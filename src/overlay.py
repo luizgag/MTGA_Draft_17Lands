@@ -1374,6 +1374,93 @@ class Overlay(ScaledWindow):
     def __on_deck_filter_change(self):
         """Handle deck filter selection changes from the listbox"""
         try:
+            # Save the current selection to configuration
+            self.__update_settings_storage()
+            
+            # Update only the card display tables - DO NOT call __update_column_options()
+            # which would clear and repopulate the listbox, destroying multi-select state
+            taken_cards = self.draft.retrieve_taken_cards()
+            filtered = self.__identify_auto_colors(
+                taken_cards, self.__get_selected_deck_colors())
+            
+            fields = {"Column1": constants.DATA_FIELD_NAME,
+                      "Column2": self.main_options_dict[self.column_2_selection.get()],
+                      "Column3": self.main_options_dict[self.column_3_selection.get()],
+                      "Column4": self.main_options_dict[self.column_4_selection.get()],
+                      "Column5": self.main_options_dict[self.column_5_selection.get()],
+                      "Column6": self.main_options_dict[self.column_6_selection.get()],
+                      "Column7": self.main_options_dict[self.column_7_selection.get()]}
+            
+            pack_cards = self.draft.retrieve_current_pack_cards()
+            picked_cards = self.draft.retrieve_current_picked_cards()
+            missing_cards = self.draft.retrieve_current_missing_cards()
+            
+            # Update the card tables with new filter
+            self.__update_pack_table(pack_cards, filtered, fields)
+            self.__update_missing_table(missing_cards, picked_cards, filtered, fields)
+            self.__update_taken_table()
+            self.__update_compare_table()
+            
+        except Exception as error:
+            logger.error(error)
+
+    def __restore_deck_filter_selections(self):
+        """Restore deck filter listbox selections from saved configuration"""
+        try:
+            self.deck_filter_listbox.selection_clear(0, tkinter.END)
+            saved_filters = self.configuration.settings.deck_filter
+
+            for filter_value in saved_filters:
+                # Find the corresponding key in deck_colors
+                matching_keys = [k for k, v in self.deck_colors.items() if v == filter_value]
+                if matching_keys:
+                    # Find the index of this key in the listbox
+                    deck_color_keys = list(self.deck_colors.keys())
+                    if matching_keys[0] in deck_color_keys:
+                        index = deck_color_keys.index(matching_keys[0])
+                        self.deck_filter_listbox.selection_set(index)
+        except Exception as error:
+            logger.error(error)
+
+    def __update_settings_storage(self):
+        '''Function that transfers settings data from the overlay widgets to a data class'''
+        try:
+            selection = self.column_2_selection.get()
+            self.configuration.settings.column_2 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_2_DEFAULT]
+            selection = self.column_3_selection.get()
+            self.configuration.settings.column_3 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_3_DEFAULT]
+            selection = self.column_4_selection.get()
+            self.configuration.settings.column_4 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_4_DEFAULT]
+            selection = self.column_5_selection.get()
+            self.configuration.settings.column_5 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_5_DEFAULT]
+            selection = self.column_6_selection.get()
+            self.configuration.settings.column_6 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_6_DEFAULT]
+            selection = self.column_7_selection.get()
+            self.configuration.settings.column_7 = self.main_options_dict[
+                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_7_DEFAULT]
+
+            # Update deck filter settings
+            self.configuration.settings.deck_filter = self.__get_selected_deck_colors()
+
+            # Persist configuration
+            self.configuration.save()
+        except Exception as error:
+            logger.error(error)
+
+        # Default to All Decks if nothing selected
+        if not selected_colors:
+            selected_colors = [constants.FILTER_OPTION_ALL_DECKS]
+
+        return selected_colors
+
+    def __on_deck_filter_change(self):
+        """Handle deck filter selection changes from the listbox"""
+        try:
             # Update settings and persist configuration
             self.__update_settings_storage()
             # Update the overlay to reflect the new selection
