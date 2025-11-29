@@ -378,6 +378,7 @@ class Overlay(ScaledWindow):
         self.data_source_checkbox_value = tkinter.IntVar(self.root)
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
+        self.best_in_column_threshold_value = tkinter.DoubleVar(self.root)
 
         self.taken_type_creature_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_creature_checkbox_value.set(True)
@@ -1406,6 +1407,8 @@ class Overlay(ScaledWindow):
                 self.deck_filter_checkbox_value.get())
             self.configuration.settings.refresh_button_enabled = bool(
                 self.refresh_button_checkbox_value.get())
+            self.configuration.settings.best_in_column_threshold = float(
+                self.best_in_column_threshold_value.get())
             write_configuration(self.configuration)
         except Exception as error:
             logger.error(error)
@@ -1491,6 +1494,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.deck_filter_enabled)
             self.refresh_button_checkbox_value.set(
                 self.configuration.settings.refresh_button_enabled)
+            self.best_in_column_threshold_value.set(
+                self.configuration.settings.best_in_column_threshold)
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -2555,6 +2560,17 @@ class Overlay(ScaledWindow):
                 row=row_count, column=0, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             save_screenshot_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+            best_in_column_threshold_label = Label(popup, text="Best Column Threshold (%):",
+                                    style="MainSectionsBold.TLabel", anchor="e")
+            best_in_column_threshold_entry = Entry(popup, textvariable=self.best_in_column_threshold_value)
+
+            best_in_column_threshold_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            best_in_column_threshold_entry.grid(
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1

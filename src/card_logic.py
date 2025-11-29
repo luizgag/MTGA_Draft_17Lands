@@ -55,6 +55,9 @@ class CardResult:
                     elif option == constants.DATA_FIELD_WHEEL:
                         selected_card["results"][count] = self.__process_wheel_normalized(
                             card, wheel_sum)
+                    elif option in [constants.DATA_FIELD_BEST_GPWR, constants.DATA_FIELD_BEST_GIHWR]:
+                        selected_card["results"][count] = self.__process_best_in_field(
+                            card, option)
                     elif option in card:
                         selected_card["results"][count] = card[option]
                     else:
@@ -168,6 +171,60 @@ class CardResult:
         except Exception as error:
             logger.error(error)
 
+        return result
+
+    def __process_best_in_field(self, card, option):
+        """Retrieve the best performing color for the specified field (GPWR or GIHWR)"""
+        result = "NA"
+        try:
+            target_field = constants.DATA_FIELD_GPWR if option == constants.DATA_FIELD_BEST_GPWR else constants.DATA_FIELD_GIHWR
+            count_field = constants.WIN_RATE_FIELDS_DICT[target_field]
+            
+            best_value = -1
+            best_formatted_result = "NA"
+            best_color = "NA"
+            
+            # Calculate total games for dynamic filtering
+            total_games = 0
+            if constants.DATA_FIELD_DECK_COLORS in card:
+                # Try to get total games from "All Decks" first
+                if constants.FILTER_OPTION_ALL_DECKS in card[constants.DATA_FIELD_DECK_COLORS] and \
+                   count_field in card[constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]:
+                    total_games = card[constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS][count_field]
+                else:
+                    # Fallback: sum individual colors
+                    for color, data in card[constants.DATA_FIELD_DECK_COLORS].items():
+                        if color != constants.FILTER_OPTION_ALL_DECKS and count_field in data:
+                            total_games += data[count_field]
+
+            if constants.DATA_FIELD_DECK_COLORS in card:
+                for color, data in card[constants.DATA_FIELD_DECK_COLORS].items():
+                    # Ignore "All Decks" and check if the target field exists
+                    if color != constants.FILTER_OPTION_ALL_DECKS and target_field in data and count_field in data:
+                        
+                        # Dynamic Filtering: Ignore if < threshold% of total games or < 10 games
+                        game_count = data[count_field]
+                        threshold = self.configuration.settings.best_in_column_threshold / 100.0
+                        if game_count < 10 or (total_games > 0 and (game_count / total_games) < threshold):
+                            continue
+
+                        # Calculate the formatted result (Rating, Grade, or %)
+                        formatted_result = self.__format_win_rate(card, target_field, count_field, color)
+                        
+                        # Get a sortable numeric value
+                        sortable_value = field_process_sort(formatted_result)
+                        
+                        if sortable_value > best_value:
+                            best_value = sortable_value
+                            best_formatted_result = formatted_result
+                            best_color = color
+            
+            if best_color != "NA":
+                result = f"{best_formatted_result} ({best_color})"
+                
+        except Exception as error:
+            logger.error(error)
+            
         return result
 
     def __format_win_rate(self, card, winrate_field, winrate_count, color):
