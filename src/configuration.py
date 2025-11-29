@@ -63,6 +63,10 @@ class Settings(BaseModel):
     @field_validator('deck_filter')
     @classmethod
     def validate_deck_filter(cls, value, info):
+        # Handle case where deck_filter might be a list (from old configs)
+        if isinstance(value, list):
+            value = value[0] if value else constants.DECK_FILTER_DEFAULT
+
         allowed_values = constants.DECK_FILTERS  # List of options
         if value not in allowed_values:
             return cls.model_fields[info.field_name].default
