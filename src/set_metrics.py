@@ -34,6 +34,41 @@ class SetMetrics:
 
         return round(mean, self._digits), round(std, self._digits)
 
+    def get_aggregated_metrics(self, colors: list, field: str) -> Tuple[float, float]:
+        """
+        Get aggregated mean and std for multiple colors.
+
+        Args:
+            colors: List of color filter strings
+            field: Data field (e.g., DATA_FIELD_GIHWR)
+
+        Returns:
+            Tuple of (aggregated_mean, aggregated_std)
+        """
+        if not colors:
+            return 0.0, 0.0
+
+        # Simple average of means for now
+        # Could be improved with weighted average based on sample sizes
+        total_mean = 0.0
+        total_std_sq = 0.0
+        count = 0
+
+        for color in colors:
+            mean, std = self.get_metrics(color, field)
+            if mean > 0:
+                total_mean += mean
+                total_std_sq += std ** 2
+                count += 1
+
+        if count > 0:
+            avg_mean = total_mean / count
+            # Combined standard deviation (assuming independence)
+            combined_std = (total_std_sq / count) ** 0.5
+            return round(avg_mean, self._digits), round(combined_std, self._digits)
+
+        return 0.0, 0.0
+
     def calculate_percentile(self, winrate: float, colors: str, field: str) -> float:
         """
         Calculate the percentile for a given win rate, color, and field using the cumulative distribution function (CDF) of a normal distribution.
