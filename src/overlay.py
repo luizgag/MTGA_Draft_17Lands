@@ -1275,6 +1275,9 @@ class Overlay(ScaledWindow):
                 self.deck_filter_listbox.insert(tkinter.END, key)
                 self.deck_filter_list.append(key)
 
+            # Restore saved selections after populating
+            self.__restore_deck_filter_selections()
+
         except Exception as error:
             logger.error(error)
 
@@ -1345,14 +1348,22 @@ class Overlay(ScaledWindow):
 
     def __get_selected_deck_colors(self):
         """Retrieve list of selected color combinations from listbox"""
-        selected_indices = self.deck_filter_listbox.curselection()
         selected_colors = []
-        deck_color_keys = list(self.deck_colors.keys())
 
-        for index in selected_indices:
-            if index < len(deck_color_keys):
-                display_name = deck_color_keys[index]
-                selected_colors.append(self.deck_colors[display_name])
+        try:
+            # Check if listbox has items
+            if self.deck_filter_listbox.size() == 0:
+                return [constants.FILTER_OPTION_ALL_DECKS]
+
+            selected_indices = self.deck_filter_listbox.curselection()
+            deck_color_keys = list(self.deck_colors.keys())
+
+            for index in selected_indices:
+                if index < len(deck_color_keys):
+                    display_name = deck_color_keys[index]
+                    selected_colors.append(self.deck_colors[display_name])
+        except Exception as error:
+            logger.error(error)
 
         # Default to All Decks if nothing selected
         if not selected_colors:
@@ -1367,6 +1378,24 @@ class Overlay(ScaledWindow):
             self.__update_settings_storage()
             # Update the overlay to reflect the new selection
             self.__update_overlay_callback(False, Source.UPDATE)
+        except Exception as error:
+            logger.error(error)
+
+    def __restore_deck_filter_selections(self):
+        """Restore deck filter listbox selections from saved configuration"""
+        try:
+            self.deck_filter_listbox.selection_clear(0, tkinter.END)
+            saved_filters = self.configuration.settings.deck_filter
+
+            for filter_value in saved_filters:
+                # Find the corresponding key in deck_colors
+                matching_keys = [k for k, v in self.deck_colors.items() if v == filter_value]
+                if matching_keys:
+                    # Find the index of this key in the listbox
+                    deck_color_keys = list(self.deck_colors.keys())
+                    if matching_keys[0] in deck_color_keys:
+                        index = deck_color_keys.index(matching_keys[0])
+                        self.deck_filter_listbox.selection_set(index)
         except Exception as error:
             logger.error(error)
 
@@ -1476,18 +1505,8 @@ class Overlay(ScaledWindow):
             self.column_7_selection.set(selection[0] if len(
                 selection) else constants.COLUMN_7_DEFAULT)
 
-            # Update listbox selections based on saved deck_filter list
-            self.deck_filter_listbox.selection_clear(0, tkinter.END)
-            saved_filters = self.configuration.settings.deck_filter
-            for filter_value in saved_filters:
-                # Find the corresponding key in deck_colors
-                matching_keys = [k for k, v in self.deck_colors.items() if v == filter_value]
-                if matching_keys:
-                    # Find the index of this key in the listbox
-                    deck_color_keys = list(self.deck_colors.keys())
-                    if matching_keys[0] in deck_color_keys:
-                        index = deck_color_keys.index(matching_keys[0])
-                        self.deck_filter_listbox.selection_set(index)
+            # NOTE: Listbox selection restoration moved to __restore_deck_filter_selections()
+            # which is called after the listbox is populated in __update_column_options()
 
             self.filter_format_selection.set(
                 self.configuration.settings.filter_format)
@@ -1568,10 +1587,13 @@ class Overlay(ScaledWindow):
                   "Column5": self.main_options_dict[self.column_5_selection.get()],
                   "Column6": self.main_options_dict[self.column_6_selection.get()],
                   "Column7": self.main_options_dict[self.column_7_selection.get()], }
-        self.__update_pack_table([],  self.deck_filter_selection.get(), fields)
+
+        # Use the new multi-select method instead of the old StringVar
+        selected_colors = self.__get_selected_deck_colors()
+        self.__update_pack_table([], selected_colors, fields)
 
         self.__update_missing_table(
-            [], {}, self.deck_filter_selection.get(), fields)
+            [], {}, selected_colors, fields)
 
         self.root.update()
 
@@ -1995,7 +2017,16 @@ class Overlay(ScaledWindow):
                 popup, highlightbackground="white", highlightthickness=2)
             taken_filter_label = Label(
                 option_frame, text="Deck Filter:", style="MainSectionsBold.TLabel", anchor="w")
-            self.taken_filter_selection.set(self.deck_filter_selection.get())
+
+            # Get the first selected color for the taken filter (it's still single-select)
+            selected_colors = self.__get_selected_deck_colors()
+            if selected_colors:
+                # Find the display name for the first selected color
+                for display_name, color_code in self.deck_colors.items():
+                    if color_code == selected_colors[0]:
+                        self.taken_filter_selection.set(display_name)
+                        break
+
             taken_filter_list = self.deck_filter_list
 
             taken_option = OptionMenu(option_frame, self.taken_filter_selection, self.taken_filter_selection.get(
@@ -3006,8 +3037,7 @@ class Overlay(ScaledWindow):
                     "w", self.__update_source_callback)),
                 (self.result_format_selection, lambda: self.result_format_selection.trace(
                     "w", self.__update_source_callback)),
-                (self.deck_filter_selection, lambda: self.deck_filter_selection.trace(
-                    "w", self.__update_source_callback)),
+                # deck_filter_selection trace removed - Listbox now uses <<ListboxSelect>> binding
                 (self.taken_alsa_checkbox_value, lambda: self.taken_alsa_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.taken_ata_checkbox_value, lambda: self.taken_ata_checkbox_value.trace(
