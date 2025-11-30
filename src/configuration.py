@@ -30,6 +30,8 @@ class Settings(BaseModel):
     column_6: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_6_DEFAULT]
     column_7: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_7_DEFAULT]
     deck_filter: str = constants.DECK_FILTER_DEFAULT
+    deck_filters: list = Field(default_factory=lambda: [constants.DECK_FILTER_DEFAULT])
+    deck_filter_count: int = constants.DECK_FILTER_COUNT_DEFAULT
     filter_format: str = constants.DECK_FILTER_FORMAT_COLORS
     result_format: str = constants.RESULT_FORMAT_WIN_RATE
     ui_size: str = constants.UI_SIZE_DEFAULT
@@ -61,6 +63,10 @@ class Settings(BaseModel):
     @field_validator('deck_filter')
     @classmethod
     def validate_deck_filter(cls, value, info):
+        # Handle case where deck_filter might be a list (from old configs)
+        if isinstance(value, list):
+            value = value[0] if value else constants.DECK_FILTER_DEFAULT
+
         allowed_values = constants.DECK_FILTERS  # List of options
         if value not in allowed_values:
             return cls.model_fields[info.field_name].default
@@ -89,6 +95,25 @@ class Settings(BaseModel):
         if value not in allowed_values:
             return cls.model_fields[info.field_name].default
         return value
+
+    @field_validator('deck_filter_count')
+    @classmethod
+    def validate_deck_filter_count(cls, value, info):
+        if value < constants.DECK_FILTER_COUNT_MIN or value > constants.DECK_FILTER_COUNT_MAX:
+            return constants.DECK_FILTER_COUNT_DEFAULT
+        return value
+
+    @field_validator('deck_filters')
+    @classmethod
+    def validate_deck_filters(cls, value, info):
+        if not isinstance(value, list) or len(value) == 0:
+            return [constants.DECK_FILTER_DEFAULT]
+        # Validate each filter
+        valid_filters = []
+        for f in value:
+            if f in constants.DECK_FILTERS or f == constants.DECK_FILTER_NONE:
+                valid_filters.append(f)
+        return valid_filters if valid_filters else [constants.DECK_FILTER_DEFAULT]
 
 
 class CardLogic(BaseModel):
@@ -136,6 +161,18 @@ def read_configuration(file_location: str = CONFIG_FILE) -> Tuple[Configuration,
             config_data = json.loads(data.read())
 
         config_object = Configuration.model_validate(config_data)
+
+        # Migration logic: convert old deck_filter to new deck_filters list
+        if 'settings' in config_data:
+            settings_data = config_data['settings']
+            # If deck_filters is not present or is default, but deck_filter has a value
+            if ('deck_filters' not in settings_data or
+                settings_data.get('deck_filters') == [constants.DECK_FILTER_DEFAULT]) and \
+               'deck_filter' in settings_data and \
+               settings_data['deck_filter'] != constants.DECK_FILTER_DEFAULT:
+                # Migrate single deck_filter to deck_filters list
+                config_object.settings.deck_filters = [settings_data['deck_filter']]
+
         success = True
     except (FileNotFoundError, json.JSONDecodeError) as error:
         logger.error(error)

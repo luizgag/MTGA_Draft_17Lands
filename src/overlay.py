@@ -408,6 +408,13 @@ class Overlay(ScaledWindow):
         self.result_format_list = constants.RESULT_FORMAT_LIST
         self.deck_filter_selection = tkinter.StringVar(self.root)
         self.deck_filter_list = self.deck_colors.keys()
+
+        # Multi-deck filter support
+        self.deck_filter_selections = []  # List of StringVar for each combo box
+        self.deck_filter_combo_boxes = []  # List of OptionMenu widgets
+        self.deck_filter_frames = []  # List of frames for combo box rows
+        self.deck_filter_count_selection = tkinter.StringVar(self.root)
+
         self.taken_filter_selection = tkinter.StringVar(self.root)
         self.taken_type_selection = tkinter.StringVar(self.root)
         self.ui_size_selection = tkinter.StringVar(self.root)
@@ -438,6 +445,14 @@ class Overlay(ScaledWindow):
                                               self.deck_filter_selection.get(), *self.deck_filter_list, style="All.TMenubutton")
         menu = self.root.nametowidget(self.deck_colors_options['menu'])
         menu.config(font=self.fonts_dict["All.TMenubutton"])
+
+        # Multi-filter container frame
+        self.deck_filter_container_frame = tkinter.Frame(self.root)
+        # Initialize with the configured number of deck filters
+        self.__create_deck_filter_combo_boxes(
+            self.deck_filter_container_frame,
+            self.configuration.settings.deck_filter_count
+        )
 
         self.refresh_button_frame = tkinter.Frame(self.root)
         self.refresh_button = Button(
@@ -514,8 +529,9 @@ class Overlay(ScaledWindow):
 
         self.deck_colors_label_frame.grid(
             row=6, column=0, columnspan=1, sticky='nsew', pady=row_padding)
-        self.deck_colors_option_frame.grid(
-            row=6, column=1, columnspan=1, sticky='nsw')
+        # Use multi-filter container frame instead of single option frame
+        self.deck_filter_container_frame.grid(
+            row=6, column=1, columnspan=1, sticky='nsew')
 
         self.separator_frame_draft.grid(
             row=7, column=0, columnspan=2, sticky='nsew', pady=row_padding)
@@ -585,6 +601,110 @@ class Overlay(ScaledWindow):
         else:
             self.root.attributes("-topmost", False)
             self.root.iconify()
+
+    def __create_deck_filter_combo_boxes(self, parent_frame, count):
+        """
+        Create the specified number of deck filter combo boxes.
+        Arranged in rows of 3 maximum.
+
+        Args:
+            parent_frame: Parent tkinter frame
+            count: Number of combo boxes to create
+        """
+        # Clear existing combo boxes
+        for frame in self.deck_filter_frames:
+            frame.destroy()
+        self.deck_filter_frames.clear()
+        self.deck_filter_selections.clear()
+        self.deck_filter_combo_boxes.clear()
+
+        # Add "None" option to the filter list
+        filter_options = list(self.deck_colors.keys())
+        if constants.DECK_FILTER_NONE not in filter_options:
+            filter_options.insert(0, constants.DECK_FILTER_NONE)
+
+        # Calculate rows needed (3 per row max)
+        max_per_row = 3
+        num_rows = (count + max_per_row - 1) // max_per_row
+
+        combo_index = 0
+        for row in range(num_rows):
+            row_frame = tkinter.Frame(parent_frame)
+            row_frame.pack(fill='x', expand=True)
+            self.deck_filter_frames.append(row_frame)
+
+            combos_in_row = min(max_per_row, count - combo_index)
+            for col in range(combos_in_row):
+                # Create StringVar for this combo box
+                selection_var = tkinter.StringVar(self.root)
+
+                # Set default value
+                if combo_index < len(self.configuration.settings.deck_filters):
+                    default_val = self.configuration.settings.deck_filters[combo_index]
+                    # Find the display key for this value
+                    display_key = self.__get_deck_color_display_key(default_val)
+                    selection_var.set(display_key)
+                else:
+                    selection_var.set(constants.DECK_FILTER_NONE)
+
+                self.deck_filter_selections.append(selection_var)
+
+                # Create combo box
+                combo_frame = tkinter.Frame(row_frame)
+                combo_frame.pack(side='left', padx=2, pady=2, expand=True, fill='x')
+
+                label = Label(combo_frame, text=f"Filter {combo_index + 1}:",
+                             style="MainSections.TLabel")
+                label.pack(side='left')
+
+                combo = OptionMenu(combo_frame, selection_var, selection_var.get(),
+                                  *filter_options, style="All.TMenubutton")
+                combo.pack(side='left', expand=True, fill='x')
+
+                self.deck_filter_combo_boxes.append(combo)
+                combo_index += 1
+
+    def __get_deck_color_display_key(self, value):
+        """Get the display key for a deck color value."""
+        if value == constants.DECK_FILTER_NONE:
+            return constants.DECK_FILTER_NONE
+        for key, val in self.deck_colors.items():
+            if val == value:
+                return key
+        return constants.DECK_FILTER_DEFAULT
+
+    def __get_selected_deck_filters(self):
+        """
+        Get list of currently selected deck filter values.
+
+        Returns:
+            List of deck filter values (not display keys)
+        """
+        filters = []
+        for selection_var in self.deck_filter_selections:
+            display_key = selection_var.get()
+            if display_key == constants.DECK_FILTER_NONE:
+                filters.append(constants.DECK_FILTER_NONE)
+            elif display_key in self.deck_colors:
+                filters.append(self.deck_colors[display_key])
+            else:
+                filters.append(constants.DECK_FILTER_NONE)
+        return filters
+
+    def __get_current_filter_selections(self):
+        """
+        Get the current deck filter selections (display keys).
+        Uses multi-filter selections if available, otherwise falls back to single selection.
+
+        Returns:
+            List of selected filter display keys
+        """
+        if self.deck_filter_selections:
+            # Get selections from multi-combo boxes (display keys)
+            return [var.get() for var in self.deck_filter_selections]
+        else:
+            # Fallback to single selection for backwards compatibility
+            return [self.deck_filter_selection.get()]
 
     def main_loop(self):
         '''Run the TKinter overlay'''
@@ -718,20 +838,38 @@ class Overlay(ScaledWindow):
         if key == KeyCode.from_char(HOTKEY_CTRL_G):
             self.lift_window()
 
-    def __identify_auto_colors(self, cards, selected_option):
-        '''Update the Deck Filter option menu when the Auto option is selected'''
+    def __identify_auto_colors(self, cards, selected_options):
+        '''Update the Deck Filter option menu when the Auto option is selected
+
+        Args:
+            cards: List of cards
+            selected_options: Can be a single string (backwards compatibility) or list of strings
+
+        Returns:
+            List of filtered color options
+        '''
         filtered_colors = [constants.FILTER_OPTION_ALL_DECKS]
 
         try:
-            #selected_option = self.deck_filter_selection.get()
-            selected_color = self.deck_colors[selected_option]
-            filtered_colors = filter_options(
-                cards, selected_color, self.set_metrics, self.configuration)
+            # Handle backwards compatibility - convert single selection to list
+            if isinstance(selected_options, str):
+                selected_options = [selected_options]
 
-            if selected_color == constants.FILTER_OPTION_AUTO:
+            # Get the actual color values from the selected options (display keys)
+            selected_colors = []
+            for option in selected_options:
+                if option in self.deck_colors:
+                    selected_colors.append(self.deck_colors[option])
+
+            # Use filter_options with the list of selected colors
+            filtered_colors = filter_options(
+                cards, selected_colors, self.set_metrics, self.configuration)
+
+            # Update the Auto option display if needed (for backwards compatibility)
+            if len(selected_colors) == 1 and selected_colors[0] == constants.FILTER_OPTION_AUTO:
                 new_key = f"{constants.FILTER_OPTION_AUTO} ({'/'.join(filtered_colors)})"
-                if new_key != selected_option:
-                    self.deck_colors.pop(selected_option)
+                if new_key != selected_options[0]:
+                    self.deck_colors.pop(selected_options[0])
                     new_dict = {new_key: constants.FILTER_OPTION_AUTO}
                     new_dict.update(self.deck_colors)
                     self.deck_colors = new_dict
@@ -857,7 +995,7 @@ class Overlay(ScaledWindow):
             taken_cards = self.draft.retrieve_taken_cards()
 
             filtered_colors = self.__identify_auto_colors(
-                taken_cards, self.deck_filter_selection.get())
+                taken_cards, self.__get_current_filter_selections())
             fields = {"Column1": constants.DATA_FIELD_NAME,
                       "Column2": self.main_options_dict[self.column_2_selection.get()],
                       "Column3": self.main_options_dict[self.column_3_selection.get()],
@@ -1359,6 +1497,25 @@ class Overlay(ScaledWindow):
             selection = self.deck_filter_selection.get()
             self.configuration.settings.deck_filter = self.deck_colors[
                 selection] if selection in self.deck_colors else self.deck_colors[constants.DECK_FILTER_DEFAULT]
+
+            # Save deck filter count
+            old_deck_filter_count = self.configuration.settings.deck_filter_count
+            try:
+                new_deck_filter_count = int(self.deck_filter_count_selection.get())
+                self.configuration.settings.deck_filter_count = new_deck_filter_count
+
+                # If count changed, recreate the combo boxes
+                if old_deck_filter_count != new_deck_filter_count:
+                    self.__create_deck_filter_combo_boxes(
+                        self.deck_filter_container_frame,
+                        new_deck_filter_count
+                    )
+            except (ValueError, AttributeError):
+                pass
+
+            # Save deck filters list
+            self.configuration.settings.deck_filters = self.__get_selected_deck_filters()
+
             self.configuration.settings.filter_format = self.filter_format_selection.get()
             self.configuration.settings.result_format = self.result_format_selection.get()
             self.configuration.settings.ui_size = self.ui_size_selection.get()
@@ -1524,10 +1681,14 @@ class Overlay(ScaledWindow):
                   "Column5": self.main_options_dict[self.column_5_selection.get()],
                   "Column6": self.main_options_dict[self.column_6_selection.get()],
                   "Column7": self.main_options_dict[self.column_7_selection.get()], }
-        self.__update_pack_table([],  self.deck_filter_selection.get(), fields)
+
+        # Get filtered colors from multi-filter selections
+        filtered_colors = self.__identify_auto_colors([], self.__get_current_filter_selections())
+
+        self.__update_pack_table([],  filtered_colors, fields)
 
         self.__update_missing_table(
-            [], {}, self.deck_filter_selection.get(), fields)
+            [], {}, filtered_colors, fields)
 
         self.root.update()
 
@@ -1552,7 +1713,7 @@ class Overlay(ScaledWindow):
         taken_cards = self.draft.retrieve_taken_cards()
 
         filtered = self.__identify_auto_colors(
-            taken_cards, self.deck_filter_selection.get())
+            taken_cards, self.__get_current_filter_selections())
         fields = {"Column1": constants.DATA_FIELD_NAME,
                   "Column2": self.main_options_dict[self.column_2_selection.get()],
                   "Column3": self.main_options_dict[self.column_3_selection.get()],
@@ -2573,6 +2734,27 @@ class Overlay(ScaledWindow):
             best_in_column_threshold_entry.grid(
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
+            # Add deck filter count option
+            deck_filter_count_label = Label(
+                popup, text="Number of Deck Filters:",
+                style="MainSectionsBold.TLabel", anchor="e")
+
+            self.deck_filter_count_selection.set(str(self.configuration.settings.deck_filter_count))
+            deck_filter_count_options = OptionMenu(
+                popup, self.deck_filter_count_selection,
+                self.deck_filter_count_selection.get(),
+                *constants.DECK_FILTER_COUNT_OPTIONS,
+                style="All.TMenubutton"
+            )
+            deck_filter_count_options.config(width=15)
+            menu = self.root.nametowidget(deck_filter_count_options['menu'])
+            menu.config(font=self.fonts_dict["All.TMenubutton"])
+
+            deck_filter_count_label.grid(row=row_count, column=0, columnspan=1,
+                                         sticky="nsew", padx=row_padding_x, pady=row_padding_y)
+            deck_filter_count_options.grid(row=row_count, column=1, columnspan=1, sticky="nsew")
             row_count += 1
 
             default_button.grid(row=row_count, column=0,

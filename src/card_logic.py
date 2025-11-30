@@ -10,6 +10,92 @@ from src.logger import create_logger
 
 logger = create_logger()
 
+
+def aggregate_color_data(card, color_filters, field):
+    """
+    Aggregate data from multiple color filters for a specific field.
+    Returns the weighted average based on sample size (GIH count).
+
+    Args:
+        card: Card dictionary with deck_colors data
+        color_filters: List of color filter strings (e.g., ["BG", "UBG"])
+        field: Data field to aggregate (e.g., DATA_FIELD_GIHWR)
+
+    Returns:
+        Tuple of (aggregated_value, total_count)
+    """
+    total_value = 0.0
+    total_count = 0
+
+    # Filter out "None" and invalid filters
+    valid_filters = [f for f in color_filters
+                     if f and f != constants.DECK_FILTER_NONE
+                     and f in card.get(constants.DATA_FIELD_DECK_COLORS, {})]
+
+    if not valid_filters:
+        return 0.0, 0
+
+    for color_filter in valid_filters:
+        if color_filter in card[constants.DATA_FIELD_DECK_COLORS]:
+            color_data = card[constants.DATA_FIELD_DECK_COLORS][color_filter]
+            value = color_data.get(field, 0.0)
+
+            # Get sample count for weighted average
+            count_field = constants.WIN_RATE_FIELDS_DICT.get(field, constants.DATA_FIELD_GIH)
+            count = color_data.get(count_field, 0)
+
+            if value > 0 and count > 0:
+                total_value += value * count
+                total_count += count
+
+    if total_count > 0:
+        return total_value / total_count, total_count
+    return 0.0, 0
+
+
+def get_aggregated_color_filters(deck_filters):
+    """
+    Convert list of deck filter selections to a list of valid color filters.
+    Removes "None" entries and duplicates.
+
+    Args:
+        deck_filters: List of selected deck filters from UI
+
+    Returns:
+        List of unique, valid color filter strings
+    """
+    valid_filters = []
+    seen = set()
+
+    for f in deck_filters:
+        if f and f != constants.DECK_FILTER_NONE and f not in seen:
+            valid_filters.append(f)
+            seen.add(f)
+
+    return valid_filters if valid_filters else [constants.FILTER_OPTION_ALL_DECKS]
+
+
+def get_aggregated_card_stats(card, color_filters):
+    """
+    Get all relevant stats for a card aggregated across multiple color filters.
+
+    Args:
+        card: Card dictionary
+        color_filters: List of color filter strings
+
+    Returns:
+        Dictionary with aggregated stats for all data fields
+    """
+    aggregated_stats = {}
+
+    for field in constants.DATA_FIELDS_LIST:
+        value, count = aggregate_color_data(card, color_filters, field)
+        aggregated_stats[field] = value
+        aggregated_stats[f"{field}_count"] = count
+
+    return aggregated_stats
+
+
 @dataclass
 class DeckMetrics:
     cmc_average: float = 0.0
@@ -413,17 +499,43 @@ def get_deck_metrics(deck):
     return metrics
 
 
-def filter_options(deck, option_selection, metrics, configuration):
-    """This function returns a list of colors based on the deck filter option"""
-    filtered_color_list = [option_selection]
+def filter_options(deck, option_selections, metrics, configuration):
+    """
+    This function returns a list of colors based on the deck filter options.
+
+    Args:
+        deck: Current deck cards
+        option_selections: List of selected filter options (can be single item or multiple)
+        metrics: SetMetrics instance
+        configuration: Configuration instance
+
+    Returns:
+        List of color filters to use for data display
+    """
+    # Handle backwards compatibility - single selection
+    if isinstance(option_selections, str):
+        option_selections = [option_selections]
+
+    # Get valid filters (remove None and duplicates)
+    valid_selections = get_aggregated_color_filters(option_selections)
+
+    filtered_color_list = []
     try:
-        if constants.FILTER_OPTION_AUTO in option_selection:
-            filtered_color_list = auto_colors(deck, 5, metrics, configuration)
-        else:
-            filtered_color_list = [option_selection]
+        for selection in valid_selections:
+            if constants.FILTER_OPTION_AUTO in selection:
+                filtered_color_list.extend(auto_colors(deck, 5, metrics, configuration))
+            else:
+                filtered_color_list.append(selection)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        filtered_color_list = [x for x in filtered_color_list
+                               if not (x in seen or seen.add(x))]
+
     except Exception as error:
         logger.error(error)
-    return filtered_color_list
+
+    return filtered_color_list if filtered_color_list else [constants.FILTER_OPTION_ALL_DECKS]
 
 
 def deck_colors(deck, colors_max, metrics, configuration):
