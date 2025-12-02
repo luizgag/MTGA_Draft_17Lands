@@ -23,12 +23,16 @@ class DeckType(BaseModel):
 class Settings(BaseModel):
     """This class holds UI settings"""
     table_width: int = 270
-    column_2: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_2_DEFAULT]
-    column_3: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_3_DEFAULT]
-    column_4: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_4_DEFAULT]
-    column_5: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_5_DEFAULT]
-    column_6: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_6_DEFAULT]
-    column_7: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_7_DEFAULT]
+    columns: list = Field(default_factory=lambda: [
+        constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.FIELD_LABEL_GIHWR]
+    ])
+    # Legacy fields for backward compatibility - will be migrated to columns list
+    column_2: str = None
+    column_3: str = None
+    column_4: str = None
+    column_5: str = None
+    column_6: str = None
+    column_7: str = None
     deck_filter: str = constants.DECK_FILTER_DEFAULT
     filter_format: str = constants.DECK_FILTER_FORMAT_COLORS
     result_format: str = constants.RESULT_FORMAT_WIN_RATE
@@ -57,6 +61,19 @@ class Settings(BaseModel):
     taken_wheel_enabled: bool = False
     arena_log_location: str = ""
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
+
+    @field_validator('columns')
+    @classmethod
+    def validate_columns(cls, value, info):
+        if value is None:
+            return [constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.FIELD_LABEL_GIHWR]]
+        allowed_values = list(constants.COLUMNS_OPTIONS_EXTRA_DICT.values())
+        # Filter out invalid values, keep only valid ones
+        valid_columns = [v for v in value if v in allowed_values]
+        # Ensure at least one column exists
+        if not valid_columns:
+            return [constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.FIELD_LABEL_GIHWR]]
+        return valid_columns
 
     @field_validator('deck_filter')
     @classmethod
@@ -136,6 +153,29 @@ def read_configuration(file_location: str = CONFIG_FILE) -> Tuple[Configuration,
             config_data = json.loads(data.read())
 
         config_object = Configuration.model_validate(config_data)
+
+        # Migration: convert old column_N fields to columns list
+        settings_data = config_data.get('settings', {})
+        if settings_data:
+            # Check if we have old column fields and no/empty columns list
+            has_old_columns = any(f'column_{i}' in settings_data for i in range(2, 8))
+            columns_list = settings_data.get('columns', [])
+
+            if has_old_columns and not columns_list:
+                old_columns = []
+                for i in range(2, 8):
+                    col_key = f'column_{i}'
+                    if col_key in settings_data:
+                        value = settings_data[col_key]
+                        if value and value != constants.DATA_FIELD_DISABLED:
+                            old_columns.append(value)
+
+                if old_columns:
+                    config_object.settings.columns = old_columns
+                    # Save the migrated configuration
+                    write_configuration(config_object)
+                    logger.info("Migrated old column configuration to new format")
+
         success = True
     except (FileNotFoundError, json.JSONDecodeError) as error:
         logger.error(error)
