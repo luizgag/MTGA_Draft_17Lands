@@ -2101,7 +2101,7 @@ class Overlay(ScaledWindow):
         # Clear existing
         self.column_selections = []
 
-        # Create a StringVar for each configured column
+        # Create a StringVar for each configured column (these are non-DISABLED values)
         for column_value in self.configuration.settings.columns:
             selection = tkinter.StringVar(self.root)
             # Find the label for this value
@@ -2110,11 +2110,17 @@ class Overlay(ScaledWindow):
             selection.set(label)
             self.column_selections.append(selection)
 
-        # Always ensure at least one column exists (for adding more)
+        # Always ensure at least one real column exists
         if not self.column_selections:
             selection = tkinter.StringVar(self.root)
             selection.set(constants.FIELD_LABEL_GIHWR)
             self.column_selections.append(selection)
+
+        # CRITICAL: Always add a trailing DISABLED column as the "add new column" trigger
+        # This allows users to add more columns by selecting a non-DISABLED option
+        add_column_selection = tkinter.StringVar(self.root)
+        add_column_selection.set(constants.FIELD_LABEL_DISABLED)
+        self.column_selections.append(add_column_selection)
 
     def __build_column_fields(self):
         """Build the fields dictionary for table columns"""
@@ -2159,7 +2165,7 @@ class Overlay(ScaledWindow):
 
         Behavior:
         - If DISABLED selected on any column except the last: remove that column
-        - If DISABLED selected on the last column: remove it (unless it's the only one)
+        - If DISABLED selected on the last column: do nothing (it's the "add column" placeholder)
         - If non-DISABLED selected on the last column: add a new column with DISABLED default
         """
         # Prevent re-entry during updates
@@ -2180,13 +2186,15 @@ class Overlay(ScaledWindow):
 
             if is_disabled:
                 # User selected DISABLED
-                if len(self.column_selections) > 1:
-                    # Remove this column (unless it's the only one)
+                if not is_last_column:
+                    # Only remove if it's NOT the last column
+                    # The last column with DISABLED is the "add column" placeholder - keep it
                     self.__remove_column(index)
+                # If it IS the last column and DISABLED, do nothing - that's expected state
             else:
                 # User selected a data field
                 if is_last_column:
-                    # This was the last column and user selected something real
+                    # This was the last column (the "add column" placeholder) and user selected something real
                     # Add a new "add column" row with DISABLED default
                     self.__add_column()
 
