@@ -393,6 +393,7 @@ class Overlay(ScaledWindow):
         # Dynamic column selections - list of StringVar objects
         self.column_selections = []  # List of StringVar objects for column selections
         self.column_widgets = []     # List of (label, option_menu) tuples for settings window
+        self.column_trace_ids = []   # Separate list for column selection traces (selection, trace_id) tuples
         self.settings_popup = None   # Reference to settings window for dynamic updates
         self.settings_column_frame = None  # Frame containing column widgets
         self._updating_columns = False  # Flag to prevent infinite recursion
@@ -439,13 +440,8 @@ class Overlay(ScaledWindow):
 
         self.pack_table_frame = tkinter.Frame(self.root, width=10)
 
-        headers = {"Column1": {"width": .46, "anchor": tkinter.W},
-                   "Column2": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column3": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column4": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column5": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column6": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column7": {"width": .18, "anchor": tkinter.CENTER}}
+        # Use dynamic headers that support unlimited columns
+        headers = self.__build_table_headers()
 
         self.pack_table = self._create_header("pack_table", self.pack_table_frame, 0, self.fonts_dict["All.TableRow"], headers,
                                               self.table_width, True, True, constants.TABLE_STYLE, False)
@@ -2096,6 +2092,66 @@ class Overlay(ScaledWindow):
         self.column_widgets = []
         popup.destroy()
 
+    def __build_table_headers(self, max_columns=None):
+        """Build table headers dictionary with support for dynamic column count
+
+        Args:
+            max_columns: Maximum number of data columns (excluding name column).
+                         If None, uses constants.MAX_COLUMNS
+
+        Returns:
+            Dictionary of column headers for Treeview creation
+        """
+        if max_columns is None:
+            max_columns = constants.MAX_COLUMNS
+
+        headers = {"Column1": {"width": .46, "anchor": tkinter.W}}
+
+        for i in range(2, max_columns + 2):  # Column2 through Column(MAX+1)
+            headers[f"Column{i}"] = {"width": .18, "anchor": tkinter.CENTER}
+
+        return headers
+
+    def __calculate_table_width(self):
+        """Calculate table width based on number of active columns
+
+        Returns:
+            Scaled width value for the table
+        """
+        base_width = 270  # Base width from configuration default (for name column)
+        column_width = 55  # Width per additional data column
+
+        # Count non-disabled columns
+        active_columns = 0
+        for selection in self.column_selections:
+            value = self.main_options_dict.get(selection.get(), constants.DATA_FIELD_DISABLED)
+            if value != constants.DATA_FIELD_DISABLED:
+                active_columns += 1
+
+        # Ensure at least 1 column for calculation
+        active_columns = max(1, active_columns)
+
+        calculated_width = base_width + (column_width * active_columns)
+        return self._scale_value(calculated_width)
+
+    def __update_table_widths(self):
+        """Recalculate table width and update UI elements"""
+        try:
+            self.table_width = self.__calculate_table_width()
+
+            # Update pack_table column widths
+            fields = self.__build_column_fields()
+            control_table_column(self.pack_table, fields, self.table_width)
+
+            # Update missing_table column widths
+            control_table_column(self.missing_table, fields, self.table_width)
+
+            # Force window to resize to fit new content
+            self.root.update_idletasks()
+
+        except Exception as error:
+            logger.error(error)
+
     def __init_column_selections(self):
         """Initialize column selection variables from configuration"""
         # Clear existing
@@ -2134,6 +2190,22 @@ class Overlay(ScaledWindow):
 
         return fields
 
+    def __reindex_column_traces(self):
+        """Re-create traces with correct indices after removal"""
+        # Remove all existing column traces
+        for selection, trace_id in self.column_trace_ids:
+            try:
+                selection.trace_vdelete("w", trace_id)
+            except Exception:
+                pass
+        self.column_trace_ids = []
+
+        # Re-add with correct indices
+        for idx, selection in enumerate(self.column_selections):
+            trace_id = selection.trace("w",
+                lambda *args, i=idx: self.__on_column_selection_changed(i, *args))
+            self.column_trace_ids.append((selection, trace_id))
+
     def __add_column(self):
         """Add a new column with DISABLED as default (serves as 'add column' trigger)"""
         new_selection = tkinter.StringVar(self.root)
@@ -2144,6 +2216,7 @@ class Overlay(ScaledWindow):
         index = len(self.column_selections) - 1
         trace_id = new_selection.trace("w",
             lambda *args, idx=index: self.__on_column_selection_changed(idx, *args))
+        self.column_trace_ids.append((new_selection, trace_id))
 
         # Rebuild settings window column widgets if window is open
         if self.settings_popup and self.settings_column_frame:
@@ -2152,8 +2225,20 @@ class Overlay(ScaledWindow):
     def __remove_column(self, index):
         """Remove a column at the specified index"""
         if index < len(self.column_selections) and len(self.column_selections) > 1:
+            # Remove the trace first
+            if index < len(self.column_trace_ids):
+                selection, trace_id = self.column_trace_ids[index]
+                try:
+                    selection.trace_vdelete("w", trace_id)
+                except Exception:
+                    pass
+                self.column_trace_ids.pop(index)
+
             # Remove the StringVar
             self.column_selections.pop(index)
+
+            # Re-index remaining traces (their index callbacks need updating)
+            self.__reindex_column_traces()
 
             # Rebuild settings window column widgets if window is open
             if self.settings_popup and self.settings_column_frame:
@@ -2200,6 +2285,10 @@ class Overlay(ScaledWindow):
 
             # Update configuration and refresh tables
             self.__update_settings_storage()
+
+            # Recalculate and update table width
+            self.__update_table_widths()
+
             self.__update_overlay_callback(False)
 
         finally:
@@ -2882,19 +2971,8 @@ class Overlay(ScaledWindow):
            to modify a widget value without triggering a callback
         '''
         try:
-            # Build trace list dynamically for columns
-            trace_list = []
-
-            for idx, selection in enumerate(self.column_selections):
-                trace_list.append((
-                    selection,
-                    lambda sel=selection, i=idx: sel.trace(
-                        "w", lambda *args, idx=i: self.__on_column_selection_changed(idx, *args)
-                    )
-                ))
-
-            # Add other existing traces
-            trace_list.extend([
+            # Static traces (non-column related)
+            static_trace_list = [
                 (self.deck_stats_checkbox_value, lambda: self.deck_stats_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.missing_cards_checkbox_value, lambda: self.missing_cards_checkbox_value.trace(
@@ -2961,16 +3039,39 @@ class Overlay(ScaledWindow):
                     "w", self.__update_taken_table)),
                 (self.taken_type_other_checkbox_value, lambda: self.taken_type_other_checkbox_value.trace(
                     "w", self.__update_taken_table)),
-            ])
+            ]
 
             if enabled:
+                # Enable static traces
                 if not self.trace_ids:
-                    for trace_tuple in trace_list:
+                    for trace_tuple in static_trace_list:
                         self.trace_ids.append(trace_tuple[1]())
-            elif self.trace_ids:
-                for count, trace_tuple in enumerate(trace_list):
-                    trace_tuple[0].trace_vdelete("w", self.trace_ids[count])
-                self.trace_ids = []
+
+                # Enable column traces
+                if not self.column_trace_ids:
+                    for idx, selection in enumerate(self.column_selections):
+                        trace_id = selection.trace(
+                            "w", lambda *args, i=idx: self.__on_column_selection_changed(i, *args))
+                        self.column_trace_ids.append((selection, trace_id))
+            else:
+                # Disable static traces
+                if self.trace_ids:
+                    for count, trace_tuple in enumerate(static_trace_list):
+                        try:
+                            trace_tuple[0].trace_vdelete("w", self.trace_ids[count])
+                        except Exception:
+                            pass  # Trace may already be deleted
+                    self.trace_ids = []
+
+                # Disable column traces
+                if self.column_trace_ids:
+                    for selection, trace_id in self.column_trace_ids:
+                        try:
+                            selection.trace_vdelete("w", trace_id)
+                        except Exception:
+                            pass  # Trace may already be deleted
+                    self.column_trace_ids = []
+
         except Exception as error:
             logger.error(error)
 
