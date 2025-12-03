@@ -154,6 +154,10 @@ COLUMN_5_DEFAULT = FIELD_LABEL_DISABLED
 COLUMN_6_DEFAULT = FIELD_LABEL_DISABLED
 COLUMN_7_DEFAULT = FIELD_LABEL_DISABLED
 
+# Dynamic column configuration
+MIN_COLUMNS = 1
+MAX_COLUMNS = 20  # Optional: reasonable upper limit
+
 DECK_FILTER_DEFAULT = FILTER_OPTION_AUTO
 
 UI_SIZE_DEFAULT = "100%"
@@ -629,6 +633,26 @@ TABLE_PROPORTIONS = [
     (.60, .20, .20),
     (.46, .18, .18, .18)
 ]
+
+def get_table_proportions(num_columns):
+    """Get proportions for any number of columns dynamically
+
+    Args:
+        num_columns: Total number of columns including the name column
+
+    Returns:
+        Tuple of proportions that sum to 1.0
+    """
+    if num_columns <= len(TABLE_PROPORTIONS):
+        return TABLE_PROPORTIONS[num_columns - 1]
+
+    # Generate proportions for larger column counts
+    # First column (name) takes progressively less space as columns increase
+    name_col_width = max(0.25, 0.46 - 0.03 * (num_columns - 4))
+    remaining = 1.0 - name_col_width
+    data_col_width = remaining / (num_columns - 1)
+
+    return (name_col_width,) + (data_col_width,) * (num_columns - 1)
 
 # TODO: Where are these values from?
 # My understanding is this array is an array for values for each of the first six packs

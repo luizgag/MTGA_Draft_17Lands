@@ -103,21 +103,21 @@ def control_table_column(table, column_fields, table_width=None):
 
     table["displaycolumns"] = list(visible_columns.keys())
 
-    # Resize columns if there are fewer than 4
+    # Resize columns dynamically based on count
     if table_width:
         total_visible_columns = len(visible_columns)
         width = table_width
         offset = 0
-        if total_visible_columns <= 4:
-            proportions = constants.TABLE_PROPORTIONS[total_visible_columns - 1]
-            for column in table["displaycolumns"]:
-                column_width = min(int(math.ceil(
-                    proportions[offset] * table_width)), width)
-                width -= column_width
-                offset += 1
-                table.column(column, width=column_width)
+        # Use dynamic proportion calculation
+        proportions = constants.get_table_proportions(total_visible_columns)
+        for column in table["displaycolumns"]:
+            column_width = min(int(math.ceil(
+                proportions[offset] * table_width)), width)
+            width -= column_width
+            offset += 1
+            table.column(column, width=column_width)
 
-            table["show"] = "headings"  # use after setting columns
+        table["show"] = "headings"  # use after setting columns
 
     return last_field_index, visible_columns
 
@@ -390,18 +390,13 @@ class Overlay(ScaledWindow):
         self.taken_type_other_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_other_checkbox_value.set(True)
 
-        self.column_2_selection = tkinter.StringVar(self.root)
-        self.column_2_list = self.main_options_dict.keys()
-        self.column_3_selection = tkinter.StringVar(self.root)
-        self.column_3_list = self.main_options_dict.keys()
-        self.column_4_selection = tkinter.StringVar(self.root)
-        self.column_4_list = self.main_options_dict.keys()
-        self.column_5_selection = tkinter.StringVar(self.root)
-        self.column_5_list = self.main_options_dict.keys()
-        self.column_6_selection = tkinter.StringVar(self.root)
-        self.column_6_list = self.main_options_dict.keys()
-        self.column_7_selection = tkinter.StringVar(self.root)
-        self.column_7_list = self.main_options_dict.keys()
+        # Dynamic column selections - list of StringVar objects
+        self.column_selections = []  # List of StringVar objects for column selections
+        self.column_widgets = []     # List of (label, option_menu) tuples for settings window
+        self.column_trace_ids = []   # Separate list for column selection traces (selection, trace_id) tuples
+        self.settings_popup = None   # Reference to settings window for dynamic updates
+        self.settings_column_frame = None  # Frame containing column widgets
+        self._updating_columns = False  # Flag to prevent infinite recursion
         self.filter_format_selection = tkinter.StringVar(self.root)
         self.filter_format_list = constants.DECK_FILTER_FORMAT_LIST
         self.result_format_selection = tkinter.StringVar(self.root)
@@ -419,12 +414,7 @@ class Overlay(ScaledWindow):
         menu = self.root.nametowidget(self.data_source_options['menu'])
         menu.config(font=self.fonts_dict["All.TMenubutton"])
 
-        self.column_2_options = None
-        self.column_3_options = None
-        self.column_4_options = None
-        self.column_5_options = None
-        self.column_6_options = None
-        self.column_7_options = None
+        # Legacy variables - no longer used, kept for reference
         self.taken_table = None
         self.compare_table = None
         self.compare_list = None
@@ -450,13 +440,8 @@ class Overlay(ScaledWindow):
 
         self.pack_table_frame = tkinter.Frame(self.root, width=10)
 
-        headers = {"Column1": {"width": .46, "anchor": tkinter.W},
-                   "Column2": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column3": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column4": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column5": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column6": {"width": .18, "anchor": tkinter.CENTER},
-                   "Column7": {"width": .18, "anchor": tkinter.CENTER}}
+        # Use dynamic headers that support unlimited columns
+        headers = self.__build_table_headers()
 
         self.pack_table = self._create_header("pack_table", self.pack_table_frame, 0, self.fonts_dict["All.TableRow"], headers,
                                               self.table_width, True, True, constants.TABLE_STYLE, False)
@@ -858,13 +843,7 @@ class Overlay(ScaledWindow):
 
             filtered_colors = self.__identify_auto_colors(
                 taken_cards, self.deck_filter_selection.get())
-            fields = {"Column1": constants.DATA_FIELD_NAME,
-                      "Column2": self.main_options_dict[self.column_2_selection.get()],
-                      "Column3": self.main_options_dict[self.column_3_selection.get()],
-                      "Column4": self.main_options_dict[self.column_4_selection.get()],
-                      "Column5": self.main_options_dict[self.column_5_selection.get()],
-                      "Column6": self.main_options_dict[self.column_6_selection.get()],
-                      "Column7": self.main_options_dict[self.column_7_selection.get()], }
+            fields = self.__build_column_fields()
 
             if entry_box and card_list:
                 added_card = entry_box.get()
@@ -1168,18 +1147,11 @@ class Overlay(ScaledWindow):
             if self.ui_size_selection.get() not in self.ui_size_list:
                 self.ui_size_selection.set(
                     constants.UI_SIZE_DEFAULT)
-            if self.column_2_selection.get() not in self.main_options_dict:
-                self.column_2_selection.set(constants.COLUMN_2_DEFAULT)
-            if self.column_3_selection.get() not in self.main_options_dict:
-                self.column_3_selection.set(constants.COLUMN_3_DEFAULT)
-            if self.column_4_selection.get() not in self.main_options_dict:
-                self.column_4_selection.set(constants.COLUMN_4_DEFAULT)
-            if self.column_5_selection.get() not in self.main_options_dict:
-                self.column_5_selection.set(constants.COLUMN_5_DEFAULT)
-            if self.column_6_selection.get() not in self.main_options_dict:
-                self.column_6_selection.set(constants.COLUMN_6_DEFAULT)
-            if self.column_7_selection.get() not in self.main_options_dict:
-                self.column_7_selection.set(constants.COLUMN_7_DEFAULT)
+
+            # Validate column selections
+            for selection in self.column_selections:
+                if selection.get() not in self.main_options_dict:
+                    selection.set(constants.FIELD_LABEL_GIHWR)
 
             if self.deck_filter_selection.get() not in self.deck_colors:
                 selection = [k for k, v in self.deck_colors.items(
@@ -1198,69 +1170,11 @@ class Overlay(ScaledWindow):
 
             deck_colors_menu = self.deck_colors_options["menu"]
             deck_colors_menu.delete(0, "end")
-            column_2_menu = None
-            column_3_menu = None
-            column_4_menu = None
-            column_5_menu = None
-            column_6_menu = None
-            column_7_menu = None
-            if self.column_2_options:
-                column_2_menu = self.column_2_options["menu"]
-                column_2_menu.delete(0, "end")
-            if self.column_3_options:
-                column_3_menu = self.column_3_options["menu"]
-                column_3_menu.delete(0, "end")
-            if self.column_4_options:
-                column_4_menu = self.column_4_options["menu"]
-                column_4_menu.delete(0, "end")
-            if self.column_5_options:
-                column_5_menu = self.column_5_options["menu"]
-                column_5_menu.delete(0, "end")
-            if self.column_6_options:
-                column_6_menu = self.column_6_options["menu"]
-                column_6_menu.delete(0, "end")
-            if self.column_7_options:
-                column_7_menu = self.column_7_options["menu"]
-                column_7_menu.delete(0, "end")
-            self.column_2_list = []
-            self.column_3_list = []
-            self.column_4_list = []
-            self.column_5_list = []
-            self.column_6_list = []
-            self.column_7_list = []
             self.deck_filter_list = []
 
-            for key in self.main_options_dict:
-                if column_2_menu:
-                    column_2_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_2_selection.set(value))
-                if column_3_menu:
-                    column_3_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_3_selection.set(value))
-                if column_4_menu:
-                    column_4_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_4_selection.set(value))
-
-                # self.deck_colors_options_list.append(data)
-                self.column_2_list.append(key)
-                self.column_3_list.append(key)
-                self.column_4_list.append(key)
-
-            for key in self.main_options_dict:
-                if column_5_menu:
-                    column_5_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_5_selection.set(value))
-                if column_6_menu:
-                    column_6_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_6_selection.set(value))
-
-                if column_7_menu:
-                    column_7_menu.add_command(label=key,
-                                              command=lambda value=key: self.column_7_selection.set(value))
-
-                self.column_5_list.append(key)
-                self.column_6_list.append(key)
-                self.column_7_list.append(key)
+            # Update column widgets if settings window is open
+            if self.settings_popup and self.settings_column_frame:
+                self.__rebuild_column_widgets()
 
             for key in self.deck_colors:
                 deck_colors_menu.add_command(label=key,
@@ -1338,24 +1252,19 @@ class Overlay(ScaledWindow):
     def __update_settings_storage(self):
         '''Function that transfers settings data from the overlay widgets to a data class'''
         try:
-            selection = self.column_2_selection.get()
-            self.configuration.settings.column_2 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_2_DEFAULT]
-            selection = self.column_3_selection.get()
-            self.configuration.settings.column_3 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_3_DEFAULT]
-            selection = self.column_4_selection.get()
-            self.configuration.settings.column_4 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_4_DEFAULT]
-            selection = self.column_5_selection.get()
-            self.configuration.settings.column_5 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_5_DEFAULT]
-            selection = self.column_6_selection.get()
-            self.configuration.settings.column_6 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_6_DEFAULT]
-            selection = self.column_7_selection.get()
-            self.configuration.settings.column_7 = self.main_options_dict[
-                selection] if selection in self.main_options_dict else self.main_options_dict[constants.COLUMN_7_DEFAULT]
+            # Build columns list from selections, excluding DISABLED
+            columns = []
+            for selection in self.column_selections:
+                value = self.main_options_dict.get(selection.get(),
+                                                    constants.DATA_FIELD_DISABLED)
+                if value != constants.DATA_FIELD_DISABLED:
+                    columns.append(value)
+
+            # Ensure at least one column
+            if not columns:
+                columns = [constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.FIELD_LABEL_GIHWR]]
+
+            self.configuration.settings.columns = columns
             selection = self.deck_filter_selection.get()
             self.configuration.settings.deck_filter = self.deck_colors[
                 selection] if selection in self.deck_colors else self.deck_colors[constants.DECK_FILTER_DEFAULT]
@@ -1417,30 +1326,8 @@ class Overlay(ScaledWindow):
         '''Function that transfers settings data from a data class to the overlay widgets'''
         self.__control_trace(False)
         try:
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_2]
-            self.column_2_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_2_DEFAULT)
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_3]
-            self.column_3_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_3_DEFAULT)
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_4]
-            self.column_4_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_4_DEFAULT)
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_5]
-            self.column_5_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_5_DEFAULT)
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_6]
-            self.column_6_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_6_DEFAULT)
-            selection = [k for k, v in self.main_options_dict.items(
-            ) if v == self.configuration.settings.column_7]
-            self.column_7_selection.set(selection[0] if len(
-                selection) else constants.COLUMN_7_DEFAULT)
+            # Initialize column selections from stored config
+            self.__init_column_selections()
             selection = [k for k, v in self.deck_colors.items(
             ) if v == self.configuration.settings.deck_filter]
             self.deck_filter_selection.set(selection[0] if len(
@@ -1517,13 +1404,7 @@ class Overlay(ScaledWindow):
         self.__update_current_draft_label(event_set, event_type)
         self.__update_pack_pick_label(current_pack, current_pick)
 
-        fields = {"Column1": constants.DATA_FIELD_NAME,
-                  "Column2": self.main_options_dict[self.column_2_selection.get()],
-                  "Column3": self.main_options_dict[self.column_3_selection.get()],
-                  "Column4": self.main_options_dict[self.column_4_selection.get()],
-                  "Column5": self.main_options_dict[self.column_5_selection.get()],
-                  "Column6": self.main_options_dict[self.column_6_selection.get()],
-                  "Column7": self.main_options_dict[self.column_7_selection.get()], }
+        fields = self.__build_column_fields()
         self.__update_pack_table([],  self.deck_filter_selection.get(), fields)
 
         self.__update_missing_table(
@@ -1553,13 +1434,7 @@ class Overlay(ScaledWindow):
 
         filtered = self.__identify_auto_colors(
             taken_cards, self.deck_filter_selection.get())
-        fields = {"Column1": constants.DATA_FIELD_NAME,
-                  "Column2": self.main_options_dict[self.column_2_selection.get()],
-                  "Column3": self.main_options_dict[self.column_3_selection.get()],
-                  "Column4": self.main_options_dict[self.column_4_selection.get()],
-                  "Column5": self.main_options_dict[self.column_5_selection.get()],
-                  "Column6": self.main_options_dict[self.column_6_selection.get()],
-                  "Column7": self.main_options_dict[self.column_7_selection.get()], }
+        fields = self.__build_column_fields()
 
         current_pack, current_pick = self.draft.retrieve_current_pack_and_pick()
         event_set, event_type = self.draft.retrieve_current_limited_event()
@@ -2212,22 +2087,262 @@ class Overlay(ScaledWindow):
 
     def __close_settings_window(self, popup):
         '''Clears settings data when the Settings window is closed'''
-        self.column_2_options = None
-        self.column_3_options = None
-        self.column_4_options = None
-        self.column_5_options = None
-        self.column_6_options = None
-        self.column_7_options = None
+        self.settings_popup = None
+        self.settings_column_frame = None
+        self.column_widgets = []
         popup.destroy()
+
+    def __build_table_headers(self, max_columns=None):
+        """Build table headers dictionary with support for dynamic column count
+
+        Args:
+            max_columns: Maximum number of data columns (excluding name column).
+                         If None, uses constants.MAX_COLUMNS
+
+        Returns:
+            Dictionary of column headers for Treeview creation
+        """
+        if max_columns is None:
+            max_columns = constants.MAX_COLUMNS
+
+        headers = {"Column1": {"width": .46, "anchor": tkinter.W}}
+
+        for i in range(2, max_columns + 2):  # Column2 through Column(MAX+1)
+            headers[f"Column{i}"] = {"width": .18, "anchor": tkinter.CENTER}
+
+        return headers
+
+    def __calculate_table_width(self):
+        """Calculate table width based on number of active columns
+
+        Returns:
+            Scaled width value for the table
+        """
+        base_width = 270  # Base width from configuration default (for name column)
+        column_width = 55  # Width per additional data column
+
+        # Count non-disabled columns
+        active_columns = 0
+        for selection in self.column_selections:
+            value = self.main_options_dict.get(selection.get(), constants.DATA_FIELD_DISABLED)
+            if value != constants.DATA_FIELD_DISABLED:
+                active_columns += 1
+
+        # Ensure at least 1 column for calculation
+        active_columns = max(1, active_columns)
+
+        calculated_width = base_width + (column_width * active_columns)
+        return self._scale_value(calculated_width)
+
+    def __update_table_widths(self):
+        """Recalculate table width and update UI elements"""
+        try:
+            self.table_width = self.__calculate_table_width()
+
+            # Update pack_table column widths
+            fields = self.__build_column_fields()
+            control_table_column(self.pack_table, fields, self.table_width)
+
+            # Update missing_table column widths
+            control_table_column(self.missing_table, fields, self.table_width)
+
+            # Force window to resize to fit new content
+            self.root.update_idletasks()
+
+        except Exception as error:
+            logger.error(error)
+
+    def __init_column_selections(self):
+        """Initialize column selection variables from configuration"""
+        # Clear existing
+        self.column_selections = []
+
+        # Create a StringVar for each configured column (these are non-DISABLED values)
+        for column_value in self.configuration.settings.columns:
+            selection = tkinter.StringVar(self.root)
+            # Find the label for this value
+            label = next((k for k, v in self.main_options_dict.items()
+                          if v == column_value), constants.FIELD_LABEL_GIHWR)
+            selection.set(label)
+            self.column_selections.append(selection)
+
+        # Always ensure at least one real column exists
+        if not self.column_selections:
+            selection = tkinter.StringVar(self.root)
+            selection.set(constants.FIELD_LABEL_GIHWR)
+            self.column_selections.append(selection)
+
+        # CRITICAL: Always add a trailing DISABLED column as the "add new column" trigger
+        # This allows users to add more columns by selecting a non-DISABLED option
+        add_column_selection = tkinter.StringVar(self.root)
+        add_column_selection.set(constants.FIELD_LABEL_DISABLED)
+        self.column_selections.append(add_column_selection)
+
+    def __build_column_fields(self):
+        """Build the fields dictionary for table columns"""
+        fields = {"Column1": constants.DATA_FIELD_NAME}
+
+        for idx, selection in enumerate(self.column_selections):
+            value = self.main_options_dict.get(selection.get(),
+                                                constants.DATA_FIELD_DISABLED)
+            if value != constants.DATA_FIELD_DISABLED:
+                fields[f"Column{idx + 2}"] = value
+
+        return fields
+
+    def __reindex_column_traces(self):
+        """Re-create traces with correct indices after removal"""
+        # Remove all existing column traces
+        for selection, trace_id in self.column_trace_ids:
+            try:
+                selection.trace_vdelete("w", trace_id)
+            except Exception:
+                pass
+        self.column_trace_ids = []
+
+        # Re-add with correct indices
+        for idx, selection in enumerate(self.column_selections):
+            trace_id = selection.trace("w",
+                lambda *args, i=idx: self.__on_column_selection_changed(i, *args))
+            self.column_trace_ids.append((selection, trace_id))
+
+    def __add_column(self):
+        """Add a new column with DISABLED as default (serves as 'add column' trigger)"""
+        new_selection = tkinter.StringVar(self.root)
+        new_selection.set(constants.FIELD_LABEL_DISABLED)
+        self.column_selections.append(new_selection)
+
+        # Add trace for the new selection
+        index = len(self.column_selections) - 1
+        trace_id = new_selection.trace("w",
+            lambda *args, idx=index: self.__on_column_selection_changed(idx, *args))
+        self.column_trace_ids.append((new_selection, trace_id))
+
+        # Rebuild settings window column widgets if window is open
+        if self.settings_popup and self.settings_column_frame:
+            self.__rebuild_column_widgets()
+
+    def __remove_column(self, index):
+        """Remove a column at the specified index"""
+        if index < len(self.column_selections) and len(self.column_selections) > 1:
+            # Remove the trace first
+            if index < len(self.column_trace_ids):
+                selection, trace_id = self.column_trace_ids[index]
+                try:
+                    selection.trace_vdelete("w", trace_id)
+                except Exception:
+                    pass
+                self.column_trace_ids.pop(index)
+
+            # Remove the StringVar
+            self.column_selections.pop(index)
+
+            # Re-index remaining traces (their index callbacks need updating)
+            self.__reindex_column_traces()
+
+            # Rebuild settings window column widgets if window is open
+            if self.settings_popup and self.settings_column_frame:
+                self.__rebuild_column_widgets()
+
+    def __on_column_selection_changed(self, index, *args):
+        """
+        Called when a column selection changes.
+
+        Behavior:
+        - If DISABLED selected on any column except the last: remove that column
+        - If DISABLED selected on the last column: do nothing (it's the "add column" placeholder)
+        - If non-DISABLED selected on the last column: add a new column with DISABLED default
+        """
+        # Prevent re-entry during updates
+        if self._updating_columns:
+            return
+
+        self._updating_columns = True
+        try:
+            if index >= len(self.column_selections):
+                return
+
+            selection_value = self.column_selections[index].get()
+            data_value = self.main_options_dict.get(selection_value,
+                                                     constants.DATA_FIELD_DISABLED)
+
+            is_last_column = (index == len(self.column_selections) - 1)
+            is_disabled = (data_value == constants.DATA_FIELD_DISABLED)
+
+            if is_disabled:
+                # User selected DISABLED
+                if not is_last_column:
+                    # Only remove if it's NOT the last column
+                    # The last column with DISABLED is the "add column" placeholder - keep it
+                    self.__remove_column(index)
+                # If it IS the last column and DISABLED, do nothing - that's expected state
+            else:
+                # User selected a data field
+                if is_last_column:
+                    # This was the last column (the "add column" placeholder) and user selected something real
+                    # Add a new "add column" row with DISABLED default
+                    self.__add_column()
+
+            # Update configuration and refresh tables
+            self.__update_settings_storage()
+
+            # Recalculate and update table width
+            self.__update_table_widths()
+
+            self.__update_overlay_callback(False)
+
+        finally:
+            self._updating_columns = False
+
+    def __create_column_widget(self, parent, index, row_padding_x, row_padding_y):
+        """Create a single column configuration row with label and dropdown"""
+        row_frame = tkinter.Frame(parent)
+
+        label = Label(row_frame, text=f"Column {index + 2}:",
+                      style="MainSectionsBold.TLabel", anchor="e")
+
+        selection = self.column_selections[index]
+        option_menu = OptionMenu(row_frame, selection, selection.get(),
+                                 *self.main_options_dict.keys(),
+                                 style="All.TMenubutton")
+        option_menu.config(width=15)
+        menu = self.root.nametowidget(option_menu['menu'])
+        menu.config(font=self.fonts_dict["All.TMenubutton"])
+
+        label.pack(side=tkinter.LEFT, padx=row_padding_x)
+        option_menu.pack(side=tkinter.LEFT)
+
+        return row_frame, (label, option_menu)
+
+    def __rebuild_column_widgets(self):
+        """Rebuild all column widgets in the settings window"""
+        if not self.settings_column_frame:
+            return
+
+        # Clear existing widgets
+        for widget in self.settings_column_frame.winfo_children():
+            widget.destroy()
+
+        self.column_widgets = []
+
+        row_padding_y = (self._scale_value(3), self._scale_value(3))
+        row_padding_x = (self._scale_value(10),)
+
+        for idx in range(len(self.column_selections)):
+            row_frame, widgets = self.__create_column_widget(
+                self.settings_column_frame, idx, row_padding_x, row_padding_y)
+            row_frame.pack(fill=tkinter.X, pady=row_padding_y)
+            self.column_widgets.append(widgets)
 
     def __open_settings_window(self):
         '''Creates the Settings window'''
 
         # Don't open the window if it's already open
-        if self.column_2_options:
+        if self.settings_popup:
             return
 
         popup = tkinter.Toplevel()
+        self.settings_popup = popup
         popup.wm_title("Settings")
         popup.protocol("WM_DELETE_WINDOW",
                        lambda window=popup: self.__close_settings_window(window))
@@ -2248,18 +2363,12 @@ class Overlay(ScaledWindow):
 
             self.__control_trace(False)
 
-            column_2_label = Label(
-                popup, text="Column 2:", style="MainSectionsBold.TLabel", anchor="e")
-            column_3_label = Label(
-                popup, text="Column 3:", style="MainSectionsBold.TLabel", anchor="e")
-            column_4_label = Label(
-                popup, text="Column 4:", style="MainSectionsBold.TLabel", anchor="e")
-            column_5_label = Label(
-                popup, text="Column 5:", style="MainSectionsBold.TLabel", anchor="e")
-            column_6_label = Label(
-                popup, text="Column 6:", style="MainSectionsBold.TLabel", anchor="e")
-            column_7_label = Label(
-                popup, text="Column 7:", style="MainSectionsBold.TLabel", anchor="e")
+            # Initialize column selections from configuration
+            self.__init_column_selections()
+
+            # Create a dedicated frame for dynamic column widgets
+            self.settings_column_frame = tkinter.Frame(popup)
+            self.column_widgets = []
             filter_format_label = Label(
                 popup, text="Deck Filter Format:", style="MainSectionsBold.TLabel", anchor="e")
             result_format_label = Label(
@@ -2349,41 +2458,6 @@ class Overlay(ScaledWindow):
                                                   onvalue=1,
                                                   offvalue=0)
 
-            self.column_2_options = OptionMenu(popup, self.column_2_selection, self.column_2_selection.get(
-            ), *self.column_2_list, style="All.TMenubutton")
-            self.column_2_options.config(width=15)
-            menu = self.root.nametowidget(self.column_2_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
-
-            self.column_3_options = OptionMenu(popup, self.column_3_selection, self.column_3_selection.get(
-            ), *self.column_3_list, style="All.TMenubutton")
-            self.column_3_options.config(width=15)
-            menu = self.root.nametowidget(self.column_3_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
-
-            self.column_4_options = OptionMenu(popup, self.column_4_selection, self.column_4_selection.get(
-            ), *self.column_4_list, style="All.TMenubutton")
-            self.column_4_options.config(width=15)
-            menu = self.root.nametowidget(self.column_4_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
-
-            self.column_5_options = OptionMenu(popup, self.column_5_selection, self.column_5_selection.get(
-            ), *self.column_5_list, style="All.TMenubutton")
-            self.column_5_options.config(width=15)
-            menu = self.root.nametowidget(self.column_5_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
-
-            self.column_6_options = OptionMenu(popup, self.column_6_selection, self.column_6_selection.get(
-            ), *self.column_6_list, style="All.TMenubutton")
-            self.column_6_options.config(width=15)
-            menu = self.root.nametowidget(self.column_6_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
-
-            self.column_7_options = OptionMenu(popup, self.column_7_selection, self.column_7_selection.get(
-            ), *self.column_7_list, style="All.TMenubutton")
-            self.column_7_options.config(width=15)
-            menu = self.root.nametowidget(self.column_7_options['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
 
             filter_format_options = OptionMenu(popup, self.filter_format_selection, self.filter_format_selection.get(
             ), *self.filter_format_list, style="All.TMenubutton")
@@ -2411,41 +2485,13 @@ class Overlay(ScaledWindow):
 
             row_count = 0
 
-            column_2_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_2_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
+            # Add the dynamic column frame first
+            self.settings_column_frame.grid(row=row_count, column=0, columnspan=2,
+                                           sticky="nsew", padx=row_padding_x, pady=row_padding_y)
             row_count += 1
 
-            column_3_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_3_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
-            row_count += 1
-
-            column_4_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_4_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
-            row_count += 1
-
-            column_5_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_5_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
-            row_count += 1
-
-            column_6_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_6_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
-            row_count += 1
-
-            column_7_label.grid(row=row_count, column=0, columnspan=1,
-                                sticky="nsew", padx=row_padding_x, pady=row_padding_y)
-            self.column_7_options.grid(
-                row=row_count, column=1, columnspan=1, sticky="nsew")
-            row_count += 1
+            # Build column widgets dynamically
+            self.__rebuild_column_widgets()
 
             filter_format_label.grid(
                 row=row_count, column=0, columnspan=1, sticky="nsew",
@@ -2925,19 +2971,8 @@ class Overlay(ScaledWindow):
            to modify a widget value without triggering a callback
         '''
         try:
-            trace_list = [
-                (self.column_2_selection, lambda: self.column_2_selection.trace(
-                    "w", self.__update_settings_callback)),
-                (self.column_3_selection, lambda: self.column_3_selection.trace(
-                    "w", self.__update_settings_callback)),
-                (self.column_4_selection, lambda: self.column_4_selection.trace(
-                    "w", self.__update_settings_callback)),
-                (self.column_5_selection, lambda: self.column_5_selection.trace(
-                    "w", self.__update_settings_callback)),
-                (self.column_6_selection, lambda: self.column_6_selection.trace(
-                    "w", self.__update_settings_callback)),
-                (self.column_7_selection, lambda: self.column_7_selection.trace(
-                    "w", self.__update_settings_callback)),
+            # Static traces (non-column related)
+            static_trace_list = [
                 (self.deck_stats_checkbox_value, lambda: self.deck_stats_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.missing_cards_checkbox_value, lambda: self.missing_cards_checkbox_value.trace(
@@ -3007,13 +3042,36 @@ class Overlay(ScaledWindow):
             ]
 
             if enabled:
+                # Enable static traces
                 if not self.trace_ids:
-                    for trace_tuple in trace_list:
+                    for trace_tuple in static_trace_list:
                         self.trace_ids.append(trace_tuple[1]())
-            elif self.trace_ids:
-                for count, trace_tuple in enumerate(trace_list):
-                    trace_tuple[0].trace_vdelete("w", self.trace_ids[count])
-                self.trace_ids = []
+
+                # Enable column traces
+                if not self.column_trace_ids:
+                    for idx, selection in enumerate(self.column_selections):
+                        trace_id = selection.trace(
+                            "w", lambda *args, i=idx: self.__on_column_selection_changed(i, *args))
+                        self.column_trace_ids.append((selection, trace_id))
+            else:
+                # Disable static traces
+                if self.trace_ids:
+                    for count, trace_tuple in enumerate(static_trace_list):
+                        try:
+                            trace_tuple[0].trace_vdelete("w", self.trace_ids[count])
+                        except Exception:
+                            pass  # Trace may already be deleted
+                    self.trace_ids = []
+
+                # Disable column traces
+                if self.column_trace_ids:
+                    for selection, trace_id in self.column_trace_ids:
+                        try:
+                            selection.trace_vdelete("w", trace_id)
+                        except Exception:
+                            pass  # Trace may already be deleted
+                    self.column_trace_ids = []
+
         except Exception as error:
             logger.error(error)
 
