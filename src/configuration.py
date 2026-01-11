@@ -2,7 +2,7 @@
 import json
 import os
 from pydantic import BaseModel, field_validator, Field
-from typing import Tuple
+from typing import Tuple, List
 from src import constants
 from src.logger import create_logger
 
@@ -29,7 +29,9 @@ class Settings(BaseModel):
     column_5: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_5_DEFAULT]
     column_6: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_6_DEFAULT]
     column_7: str = constants.COLUMNS_OPTIONS_EXTRA_DICT[constants.COLUMN_7_DEFAULT]
-    deck_filter: str = constants.DECK_FILTER_DEFAULT
+    deck_filter: List[str] = Field(
+        default_factory=lambda: [constants.DECK_FILTER_DEFAULT]
+    )
     filter_format: str = constants.DECK_FILTER_FORMAT_COLORS
     result_format: str = constants.RESULT_FORMAT_WIN_RATE
     ui_size: str = constants.UI_SIZE_DEFAULT
@@ -58,13 +60,20 @@ class Settings(BaseModel):
     arena_log_location: str = ""
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
 
-    @field_validator('deck_filter')
+    @field_validator('deck_filter', mode='before')
     @classmethod
-    def validate_deck_filter(cls, value, info):
-        allowed_values = constants.DECK_FILTERS  # List of options
-        if value not in allowed_values:
-            return cls.model_fields[info.field_name].default
-        return value
+    def validate_deck_filter(cls, v):
+        """Ensure backward compatibility with string values"""
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list):
+            # Validate each item in the list
+            allowed_values = constants.DECK_FILTERS
+            valid_items = [item for item in v if item in allowed_values]
+            if not valid_items:
+                return [constants.DECK_FILTER_DEFAULT]
+            return valid_items
+        return [constants.DECK_FILTER_DEFAULT]
 
     @field_validator('filter_format')
     @classmethod

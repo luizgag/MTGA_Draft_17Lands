@@ -151,23 +151,30 @@ class CardResult:
         result = "NA"
 
         try:
-            rated_colors = []
-            for color in colors:
-                if constants.DATA_FIELD_DECK_COLORS in card \
-                        and color in card[constants.DATA_FIELD_DECK_COLORS] \
-                        and option in card[constants.DATA_FIELD_DECK_COLORS][color]:
-                    if option in constants.WIN_RATE_OPTIONS:
-                        rating_data = self.__format_win_rate(card,
-                                                             option,
-                                                             constants.WIN_RATE_FIELDS_DICT[option],
-                                                             color)
-                        rated_colors.append(rating_data)
-                    else:  # Field that's not a win rate (ALSA, IWD, etc)
-                        result = card[constants.DATA_FIELD_DECK_COLORS][color][option]
-                        result = constants.RESULT_UNKNOWN_STRING if result == 0.0 else result
-            if rated_colors:
-                result = sorted(
-                    rated_colors, key=field_process_sort, reverse=True)[0]
+            # Handle multi-color selection with weighted averaging
+            if len(colors) > 1 and option in constants.WIN_RATE_OPTIONS:
+                weighted_avg = calculate_weighted_average(card, colors, option)
+                if weighted_avg > 0:
+                    result = self.__format_win_rate_value(weighted_avg, option)
+            else:
+                # Original single-color logic or non-win-rate fields
+                rated_colors = []
+                for color in colors:
+                    if constants.DATA_FIELD_DECK_COLORS in card \
+                            and color in card[constants.DATA_FIELD_DECK_COLORS] \
+                            and option in card[constants.DATA_FIELD_DECK_COLORS][color]:
+                        if option in constants.WIN_RATE_OPTIONS:
+                            rating_data = self.__format_win_rate(card,
+                                                                 option,
+                                                                 constants.WIN_RATE_FIELDS_DICT[option],
+                                                                 color)
+                            rated_colors.append(rating_data)
+                        else:  # Field that's not a win rate (ALSA, IWD, etc)
+                            result = card[constants.DATA_FIELD_DECK_COLORS][color][option]
+                            result = constants.RESULT_UNKNOWN_STRING if result == 0.0 else result
+                if rated_colors:
+                    result = sorted(
+                        rated_colors, key=field_process_sort, reverse=True)[0]
         except Exception as error:
             logger.error(error)
 
@@ -225,6 +232,41 @@ class CardResult:
         except Exception as error:
             logger.error(error)
             
+        return result
+
+    def __format_win_rate_value(self, winrate, winrate_field):
+        """Format a win rate value according to the Result Format setting (for weighted averages)"""
+        result = 0
+        try:
+            # Use "All Decks" metrics for weighted averages since they combine multiple colors
+            if self.configuration.settings.result_format == constants.RESULT_FORMAT_RATING:
+                mean, std = self.metrics.get_metrics(constants.FILTER_OPTION_ALL_DECKS, winrate_field)
+                deviation_list = list(constants.GRADE_DEVIATION_DICT.values())
+                upper_limit = mean + std * deviation_list[0]
+                lower_limit = mean + std * deviation_list[-1]
+
+                if (winrate != 0) and (upper_limit != lower_limit):
+                    result = round(
+                        ((winrate - lower_limit) / (upper_limit - lower_limit)) * 5.0, 1)
+                    result = min(result, 5.0)
+                    result = max(result, 0.1)
+            elif self.configuration.settings.result_format == constants.RESULT_FORMAT_GRADE:
+                mean, std = self.metrics.get_metrics(constants.FILTER_OPTION_ALL_DECKS, winrate_field)
+                if ((winrate != 0) and (std != 0)):
+                    result = constants.LETTER_GRADE_F
+                    for grade, deviation in constants.GRADE_DEVIATION_DICT.items():
+                        standard_score = (winrate - mean) / std
+                        if standard_score >= deviation:
+                            result = grade
+                            break
+            else:
+                result = winrate
+
+            result = constants.RESULT_UNKNOWN_STRING if result == constants.RESULT_UNKNOWN_VALUE else result
+        except Exception as error:
+            logger.error(error)
+            result = constants.RESULT_UNKNOWN_STRING
+
         return result
 
     def __format_win_rate(self, card, winrate_field, winrate_count, color):
@@ -413,11 +455,64 @@ def get_deck_metrics(deck):
     return metrics
 
 
+def calculate_weighted_average(card, colors, win_rate_field):
+    """
+    Calculate game-weighted average win rate across multiple color combinations.
+
+    Args:
+        card: Card data dictionary with deck_colors data
+        colors: List of color combinations (e.g., ["UB", "WU", "BG"])
+        win_rate_field: The win rate field to average (e.g., "gihwr")
+
+    Returns:
+        Weighted average win rate, or 0.0 if no valid data
+    """
+    if not colors or constants.DATA_FIELD_DECK_COLORS not in card:
+        return 0.0
+
+    # Get the corresponding game count field
+    game_count_field = constants.WIN_RATE_FIELDS_DICT.get(win_rate_field)
+    if not game_count_field:
+        return 0.0
+
+    total_weighted_wr = 0.0
+    total_games = 0
+
+    deck_colors_data = card[constants.DATA_FIELD_DECK_COLORS]
+
+    for color in colors:
+        if color not in deck_colors_data:
+            continue
+
+        color_data = deck_colors_data[color]
+        win_rate = color_data.get(win_rate_field, 0.0)
+        game_count = color_data.get(game_count_field, 0)
+
+        if win_rate > 0 and game_count > 0:
+            total_weighted_wr += win_rate * game_count
+            total_games += game_count
+
+    if total_games == 0:
+        return 0.0
+
+    return round(total_weighted_wr / total_games, 2)
+
+
 def filter_options(deck, option_selection, metrics, configuration):
     """This function returns a list of colors based on the deck filter option"""
-    filtered_color_list = [option_selection]
+    filtered_color_list = []
     try:
-        if constants.FILTER_OPTION_AUTO in option_selection:
+        # Handle list input (new behavior)
+        if isinstance(option_selection, list):
+            for option in option_selection:
+                if constants.FILTER_OPTION_AUTO in option:
+                    filtered_color_list.extend(
+                        auto_colors(deck, 5, metrics, configuration)
+                    )
+                else:
+                    filtered_color_list.append(option)
+        # Handle string input (backward compatibility)
+        elif constants.FILTER_OPTION_AUTO in option_selection:
             filtered_color_list = auto_colors(deck, 5, metrics, configuration)
         else:
             filtered_color_list = [option_selection]

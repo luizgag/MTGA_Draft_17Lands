@@ -4,7 +4,7 @@ import json
 from src import constants
 from src.set_metrics import SetMetrics
 from src.configuration import Configuration, Settings
-from src.card_logic import CardResult
+from src.card_logic import CardResult, calculate_weighted_average
 from src.dataset import Dataset
 from src.tier_list import TierList, Meta, Rating
 
@@ -74,10 +74,86 @@ def test_otj_grades(otj_premier, card_name, colors, field, expected_grade):
     metrics, dataset = otj_premier
     data_list = dataset.get_data_by_name([card_name])
     assert data_list
-    
+
     config = Configuration(settings=Settings(result_format=constants.RESULT_FORMAT_GRADE))
     results = CardResult(metrics, None, config, 2)
     card_data = data_list[0]
     result_list = results.return_results([card_data], [colors],  [field])
-    
+
     assert result_list[0]["results"][0] == expected_grade
+
+
+# Weighted Average Tests
+@pytest.fixture
+def sample_card():
+    """Sample card with deck_colors data for testing weighted average"""
+    return {
+        constants.DATA_FIELD_DECK_COLORS: {
+            "UB": {constants.DATA_FIELD_GIHWR: 55.0, constants.DATA_FIELD_GIH: 1000},
+            "WU": {constants.DATA_FIELD_GIHWR: 52.0, constants.DATA_FIELD_GIH: 500},
+            "BG": {constants.DATA_FIELD_GIHWR: 58.0, constants.DATA_FIELD_GIH: 1500}
+        }
+    }
+
+
+def test_weighted_average_two_colors(sample_card):
+    """Test weighted average with two colors
+    UB: 55% * 1000 = 55000, WU: 52% * 500 = 26000
+    Total: 81000 / 1500 = 54.0%
+    """
+    result = calculate_weighted_average(
+        sample_card, ["UB", "WU"], constants.DATA_FIELD_GIHWR
+    )
+    assert result == 54.0
+
+
+def test_weighted_average_three_colors(sample_card):
+    """Test weighted average with three colors
+    UB: 55000, WU: 26000, BG: 87000
+    Total: 168000 / 3000 = 56.0%
+    """
+    result = calculate_weighted_average(
+        sample_card, ["UB", "WU", "BG"], constants.DATA_FIELD_GIHWR
+    )
+    assert result == 56.0
+
+
+def test_weighted_average_missing_color(sample_card):
+    """Test weighted average when one color doesn't exist in the card data
+    Only UB exists in sample, WR does not
+    """
+    result = calculate_weighted_average(
+        sample_card, ["UB", "WR"], constants.DATA_FIELD_GIHWR
+    )
+    assert result == 55.0  # Falls back to only valid color
+
+
+def test_weighted_average_empty_colors(sample_card):
+    """Test weighted average with empty color list"""
+    result = calculate_weighted_average(sample_card, [], constants.DATA_FIELD_GIHWR)
+    assert result == 0.0
+
+
+def test_weighted_average_no_deck_colors():
+    """Test weighted average when card has no deck_colors field"""
+    card = {"name": "Test Card"}
+    result = calculate_weighted_average(card, ["UB"], constants.DATA_FIELD_GIHWR)
+    assert result == 0.0
+
+
+def test_weighted_average_invalid_field(sample_card):
+    """Test weighted average with an invalid win rate field"""
+    result = calculate_weighted_average(sample_card, ["UB"], "invalid_field")
+    assert result == 0.0
+
+
+def test_weighted_average_zero_games(sample_card):
+    """Test weighted average when all colors have zero game counts"""
+    card = {
+        constants.DATA_FIELD_DECK_COLORS: {
+            "UB": {constants.DATA_FIELD_GIHWR: 55.0, constants.DATA_FIELD_GIH: 0},
+            "WU": {constants.DATA_FIELD_GIHWR: 52.0, constants.DATA_FIELD_GIH: 0}
+        }
+    }
+    result = calculate_weighted_average(card, ["UB", "WU"], constants.DATA_FIELD_GIHWR)
+    assert result == 0.0
