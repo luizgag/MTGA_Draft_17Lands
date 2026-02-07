@@ -57,4 +57,30 @@ def test_start_overlay_pass(mock_scanner):
             pytest.fail(f"Exception occurred: {e}")
             
 
+def test_overlay_init_does_not_check_for_updates(mock_scanner):
+    """
+    Verify that creating the overlay does not trigger an auto-update check.
+
+    AppUpdate should not be instantiated during startup.
+    """
+    mock_app_update_cls = MagicMock()
+    with (
+        patch("tkinter.Tk.mainloop", return_value=None),
+        patch("tkinter.messagebox.showinfo", return_value=None),
+        patch("src.overlay.stat", return_value=MagicMock(st_mtime=0)),
+        patch("src.overlay.write_configuration", return_value=True),
+        patch("src.overlay.LimitedSets.retrieve_limited_sets", return_value=None),
+        patch("src.overlay.AppUpdate", mock_app_update_cls),
+        patch("src.overlay.check_version") as mock_check_version,
+        patch("src.overlay.ArenaScanner", return_value=mock_scanner),
+        patch("src.overlay.FileExtractor", return_value=MagicMock()),
+        patch("src.overlay.filter_options", return_value=["All Decks"]),
+        patch("src.overlay.retrieve_arena_directory", return_value="fake_location"),
+        patch("src.overlay.search_arena_log_locations", return_value="fake_location"),
+    ):
+        start_overlay()
+        mock_app_update_cls.assert_not_called()
+        mock_check_version.assert_not_called()
+
+
 #TODO: create a test for CreateCardToolTip

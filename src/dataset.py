@@ -154,10 +154,13 @@ class Dataset:
             raise ValueError("Input argument must be a list")
         
         card_data = []
-        
+
+        if self._dataset is None:
+            return card_data
+
         # Remove the arena ID part of the dictionary and make the card name the key
         transformed_dataset = {v[DATA_FIELD_NAME]: v for v in self._dataset["card_ratings"].values()}
-                
+
         for name in name_list:
             if self._dataset and name in transformed_dataset:
                 card_data.append(transformed_dataset[name])

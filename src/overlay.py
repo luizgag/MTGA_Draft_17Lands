@@ -15,6 +15,7 @@ from PIL import Image, ImageTk, ImageFont
 from src.configuration import read_configuration, write_configuration, reset_configuration
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
+from src.mtgo_scanner import MtgoScanner
 from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory
 from src.utils import retrieve_local_set_list, open_file, clean_string
 from src import constants
@@ -291,8 +292,13 @@ class Overlay(ScaledWindow):
 
         self.extractor = FileExtractor(self.data_file)
         self.limited_sets = LimitedSets().retrieve_limited_sets()
-        self.draft = ArenaScanner(
-            self.arena_file, self.limited_sets, step_through=self.step_through)
+
+        if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+            self.draft = MtgoScanner(
+                self.configuration.settings.mtgo_log_folder, self.limited_sets, step_through=self.step_through)
+        else:
+            self.draft = ArenaScanner(
+                self.arena_file, self.limited_sets, step_through=self.step_through)
 
         self.trace_ids = []
         self.tier_data = {}
@@ -379,6 +385,8 @@ class Overlay(ScaledWindow):
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
         self.best_in_column_threshold_value = tkinter.DoubleVar(self.root)
+        self.platform_selection = tkinter.StringVar(self.root)
+        self.mtgo_log_folder_value = tkinter.StringVar(self.root)
 
         self.taken_type_creature_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_creature_checkbox_value.set(True)
@@ -554,7 +562,8 @@ class Overlay(ScaledWindow):
 
         self.root.attributes("-topmost", True)
         self.__initialize_overlay_widgets()
-        self.__update_overlay_build()
+        self.__arena_log_check()
+        self.__control_trace(True)
 
         if self.arena_file:
             logger.info("Arena Player Log Location: %s", self.arena_file)
@@ -1303,6 +1312,16 @@ class Overlay(ScaledWindow):
         if message_box:
             restart_overlay(self)
 
+    def __platform_callback(self, *_):
+        '''Callback function updates the settings and opens a restart prompt when platform changes'''
+        self.__update_settings_storage()
+        self.__update_settings_data()
+        message_box = tkinter.messagebox.askyesno(
+            title="Restart", message="A restart is required for the platform change to take effect. Restart the application?")
+
+        if message_box:
+            restart_overlay(self)
+
     def __update_draft_data(self):
         '''Function that collects pertinent draft data from the LogScanner class'''
         self.draft.retrieve_set_data(self.data_sources[self.data_source_selection.get()])
@@ -1409,6 +1428,8 @@ class Overlay(ScaledWindow):
                 self.refresh_button_checkbox_value.get())
             self.configuration.settings.best_in_column_threshold = float(
                 self.best_in_column_threshold_value.get())
+            self.configuration.settings.platform = self.platform_selection.get()
+            self.configuration.settings.mtgo_log_folder = self.mtgo_log_folder_value.get()
             write_configuration(self.configuration)
         except Exception as error:
             logger.error(error)
@@ -1496,6 +1517,10 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.refresh_button_enabled)
             self.best_in_column_threshold_value.set(
                 self.configuration.settings.best_in_column_threshold)
+            self.platform_selection.set(
+                self.configuration.settings.platform)
+            self.mtgo_log_folder_value.set(
+                self.configuration.settings.mtgo_log_folder)
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -1594,20 +1619,32 @@ class Overlay(ScaledWindow):
         ), self.stat_options_selection.get(), self.pack_table.winfo_width())
 
     def __arena_log_check(self):
-        '''Function that monitors the Arena log every 1000ms to determine if there's new draft data'''
+        '''Function that monitors the Arena/MTGO log every 1000ms to determine if there's new draft data'''
         try:
-            self.current_timestamp = stat(self.arena_file).st_mtime
-
-            if self.current_timestamp != self.previous_timestamp:
-                self.previous_timestamp = self.current_timestamp
-
-                while True:
-
+            if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+                # MTGO: Check folder mtime (new files) and current file mtime (content growth)
+                mtgo_folder = self.configuration.settings.mtgo_log_folder
+                latest_mtime = 0
+                if mtgo_folder and os.path.isdir(mtgo_folder):
+                    latest_mtime = stat(mtgo_folder).st_mtime
+                if self.draft.current_file and os.path.isfile(self.draft.current_file):
+                    latest_mtime = max(latest_mtime, stat(self.draft.current_file).st_mtime)
+                if latest_mtime and latest_mtime != self.previous_timestamp:
+                    self.previous_timestamp = latest_mtime
                     self.__update_overlay_callback(True)
-                    if self.draft.step_through:
-                        input("Continue?")
-                    else:
-                        break
+            else:
+                self.current_timestamp = stat(self.arena_file).st_mtime
+
+                if self.current_timestamp != self.previous_timestamp:
+                    self.previous_timestamp = self.current_timestamp
+
+                    while True:
+
+                        self.__update_overlay_callback(True)
+                        if self.draft.step_through:
+                            input("Continue?")
+                        else:
+                            break
         except Exception as error:
             logger.error(error)
             self.__reset_draft(True)
@@ -2563,6 +2600,35 @@ class Overlay(ScaledWindow):
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
+
+            platform_label = Label(
+                popup, text="Platform:", style="MainSectionsBold.TLabel", anchor="e")
+            platform_options = OptionMenu(popup, self.platform_selection, self.platform_selection.get(),
+                                          *constants.PLATFORM_LIST, style="All.TMenubutton",
+                                          command=self.__platform_callback)
+            platform_options.config(width=15)
+            menu = self.root.nametowidget(platform_options['menu'])
+            menu.config(font=self.fonts_dict["All.TMenubutton"])
+
+            platform_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            platform_options.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew")
+            row_count += 1
+
+            mtgo_folder_label = Label(
+                popup, text="MTGO Draft Log Folder:", style="MainSectionsBold.TLabel", anchor="e")
+            mtgo_folder_entry = Entry(popup, textvariable=self.mtgo_log_folder_value)
+
+            mtgo_folder_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            mtgo_folder_entry.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
             best_in_column_threshold_label = Label(popup, text="Best Column Threshold (%):",
                                     style="MainSectionsBold.TLabel", anchor="e")
             best_in_column_threshold_entry = Entry(popup, textvariable=self.best_in_column_threshold_value)
@@ -3004,6 +3070,8 @@ class Overlay(ScaledWindow):
                     "w", self.__update_taken_table)),
                 (self.taken_type_other_checkbox_value, lambda: self.taken_type_other_checkbox_value.trace(
                     "w", self.__update_taken_table)),
+                (self.mtgo_log_folder_value, lambda: self.mtgo_log_folder_value.trace(
+                    "w", self.__update_settings_callback)),
             ]
 
             if enabled:

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "filepath=\"$CLAUDE_FILE_PATH\"; if echo \"$filepath\" | grep -q '\\.py$'; then module=$(basename \"$filepath\" .py); testfile=\"tests/test_${module}.py\"; if [ -f \"$testfile\" ]; then python -m pytest \"$testfile\" -x -q 2>&1 | tail -20; fi; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

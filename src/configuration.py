@@ -56,6 +56,8 @@ class Settings(BaseModel):
     taken_iwd_enabled: bool = False
     taken_wheel_enabled: bool = False
     arena_log_location: str = ""
+    platform: str = constants.PLATFORM_MTGA
+    mtgo_log_folder: str = ""
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
 
     @field_validator('deck_filter')
@@ -86,6 +88,14 @@ class Settings(BaseModel):
     @classmethod
     def validate_ui_size(cls, value, info):
         allowed_values = constants.UI_SIZE_DICT  # List of options
+        if value not in allowed_values:
+            return cls.model_fields[info.field_name].default
+        return value
+
+    @field_validator('platform')
+    @classmethod
+    def validate_platform(cls, value, info):
+        allowed_values = constants.PLATFORM_LIST
         if value not in allowed_values:
             return cls.model_fields[info.field_name].default
         return value
