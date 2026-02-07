@@ -1625,9 +1625,9 @@ class Overlay(ScaledWindow):
                 # MTGO: Check folder mtime (new files) and current file mtime (content growth)
                 mtgo_folder = self.configuration.settings.mtgo_log_folder
                 latest_mtime = 0
-                if mtgo_folder and os.path.isdir(mtgo_folder):
+                if mtgo_folder and path.isdir(mtgo_folder):
                     latest_mtime = stat(mtgo_folder).st_mtime
-                if self.draft.current_file and os.path.isfile(self.draft.current_file):
+                if self.draft.current_file and path.isfile(self.draft.current_file):
                     latest_mtime = max(latest_mtime, stat(self.draft.current_file).st_mtime)
                 if latest_mtime and latest_mtime != self.previous_timestamp:
                     self.previous_timestamp = latest_mtime
