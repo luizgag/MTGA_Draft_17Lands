@@ -292,6 +292,7 @@ LOCAL_CARDS_KEY_RARITY = "rarity"
 LOCAL_CARDS_KEY_PRIMARY = "isprimarycard"
 
 SETS_FOLDER = os.path.join(os.getcwd(), "Sets")
+ARCHETYPES_FOLDER = os.path.join(os.getcwd(), "Archetypes")
 SET_FILE_SUFFIX = "Data.json"
 
 CARD_RATINGS_BACKOFF_DELAY_SECONDS = 30

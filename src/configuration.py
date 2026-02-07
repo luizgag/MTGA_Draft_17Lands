@@ -121,6 +121,7 @@ class Features(BaseModel):
     override_scale_factor: float = 0.0
     hotkey_enabled: bool = True
     images_enabled: bool = True
+    archetype_openness_enabled: bool = False
 
 
 class CardData(BaseModel):

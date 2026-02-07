@@ -2,6 +2,7 @@
 config.json
 
 # Ignore folders created by the app
+Archetypes/
 Debug/
 Downloads/
 Logs/

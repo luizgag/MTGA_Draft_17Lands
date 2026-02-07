@@ -8,7 +8,8 @@ from src.configuration import (
     read_configuration,
     write_configuration,
     reset_configuration,
-    Configuration
+    Configuration,
+    Features
 )
 
 
@@ -96,3 +97,10 @@ def test_reset_configuration(tmp_path, example_configuration):
 
     # Assert that the reset configuration matches the empty Configuration object
     assert reset_config == empty_config.model_dump()
+
+
+def test_features_archetype_openness_default():
+    """archetype_openness_enabled defaults to False."""
+    features = Features()
+    assert features.archetype_openness_enabled is False
+
