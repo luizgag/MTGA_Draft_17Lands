@@ -9,6 +9,7 @@ import io
 import math
 import argparse
 import webbrowser
+import os
 from os import stat, path
 from pynput.keyboard import Listener, KeyCode
 from PIL import Image, ImageTk, ImageFont
@@ -23,6 +24,7 @@ from src.logger import create_logger
 from src.app_update import AppUpdate
 from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.tier_list import TierWindow, TierList
+from src.archetype_openness import OpennessTracker, load_archetype_config
 from src.card_logic import (
     CardResult,
     copy_deck,
@@ -328,6 +330,8 @@ class Overlay(ScaledWindow):
             label="Suggest Decks", command=self.__open_suggest_deck_window)
         self.cardmenu.add_command(
             label="Compare Cards", command=self.__open_card_compare_window)
+        self.cardmenu.add_command(
+            label="Archetype Editor", command=self.__open_archetype_editor)
 
         self.settingsmenu = tkinter.Menu(self.menubar, tearoff=0)
         self.settingsmenu.add_command(
@@ -469,6 +473,11 @@ class Overlay(ScaledWindow):
         self.pack_table = self._create_header("pack_table", self.pack_table_frame, 0, self.fonts_dict["All.TableRow"], headers,
                                               self.table_width, True, True, constants.TABLE_STYLE, False)
 
+        # Openness panel (below pack table, hidden until archetypes loaded)
+        self.openness_tracker = None
+        self.openness_frame = tkinter.LabelFrame(self.root, text="Archetype Openness")
+        self._openness_tooltip = None
+
         self.missing_frame = tkinter.Frame(self.root)
         self.missing_cards_label = Label(
             self.missing_frame, text="Missing Cards", style="MainSectionsBold.TLabel")
@@ -533,11 +542,13 @@ class Overlay(ScaledWindow):
 
         self.status_frame.grid(row=9, column=0, columnspan=2, sticky='nsew')
         self.pack_table_frame.grid(row=10, column=0, columnspan=2)
-        self.missing_frame.grid(row=11, column=0, columnspan=2, sticky='nsew')
-        self.missing_table_frame.grid(row=12, column=0, columnspan=2)
-        self.stat_frame.grid(row=13, column=0, columnspan=2, sticky='nsew')
-        self.stat_table.grid(row=14, column=0, columnspan=2, sticky='nsew')
-        footnote_label.grid(row=15, column=0, columnspan=2)
+        self.openness_frame.grid(row=11, column=0, columnspan=2, sticky='ew')
+        self.openness_frame.grid_remove()  # Hidden until archetypes loaded
+        self.missing_frame.grid(row=12, column=0, columnspan=2, sticky='nsew')
+        self.missing_table_frame.grid(row=13, column=0, columnspan=2)
+        self.stat_frame.grid(row=14, column=0, columnspan=2, sticky='nsew')
+        self.stat_table.grid(row=15, column=0, columnspan=2, sticky='nsew')
+        footnote_label.grid(row=16, column=0, columnspan=2)
 
         self.refresh_button.pack(expand=True, fill="both")
 
@@ -1348,6 +1359,21 @@ class Overlay(ScaledWindow):
                         mean,
                         std)
 
+            # Initialize openness tracker
+            if self.configuration.features.archetype_openness_enabled:
+                set_code = self.draft.draft_sets[0] if self.draft.draft_sets else ""
+                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
+                archetype_config = load_archetype_config(config_path)
+                if archetype_config:
+                    self.openness_tracker = OpennessTracker(archetype_config)
+                    self.openness_frame.grid()
+                else:
+                    self.openness_tracker = None
+                    self.openness_frame.grid_remove()
+            else:
+                self.openness_tracker = None
+                self.openness_frame.grid_remove()
+
         use_ocr = source == Source.REFRESH and self.configuration.settings.p1p1_ocr_enabled
         if self.draft.draft_data_search(use_ocr, self.configuration.settings.save_screenshot_enabled):
             update = True
@@ -1599,6 +1625,11 @@ class Overlay(ScaledWindow):
                                  filtered,
                                  fields)
 
+        # Update openness scoring
+        if self.openness_tracker and pack_cards:
+            self.openness_tracker.record_pack(pack_cards, current_pick, current_pack - 1)
+            self.__update_openness_panel()
+
         self.__update_missing_table(missing_cards,
                                     picked_cards,
                                     filtered,
@@ -1617,6 +1648,116 @@ class Overlay(ScaledWindow):
         self.root.update_idletasks()
         self.__update_deck_stats_table(self.draft.retrieve_taken_cards(
         ), self.stat_options_selection.get(), self.pack_table.winfo_width())
+
+    def __update_openness_panel(self):
+        """Update the archetype openness panel with current scores."""
+        if not self.openness_tracker:
+            return
+
+        # Clear existing labels
+        for widget in self.openness_frame.winfo_children():
+            widget.destroy()
+
+        scores = self.openness_tracker.get_scores()
+        sorted_archetypes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        max_score = max(abs(s) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
+        if max_score == 0:
+            max_score = 1.0
+
+        for i, (name, score) in enumerate(sorted_archetypes):
+            name_label = tkinter.Label(
+                self.openness_frame,
+                text=name,
+                anchor=tkinter.W,
+                width=15,
+            )
+            name_label.grid(row=i, column=0, sticky="w", padx=(4, 2))
+
+            score_label = tkinter.Label(
+                self.openness_frame,
+                text=f"{score:+.1f}",
+                anchor=tkinter.E,
+                width=6,
+            )
+            score_label.grid(row=i, column=1, padx=2)
+
+            # Visual bar
+            bar_width = int(abs(score) / max_score * 80) if max_score else 0
+            bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
+            bar_canvas = tkinter.Canvas(
+                self.openness_frame, width=80, height=12, highlightthickness=0
+            )
+            bar_canvas.create_rectangle(0, 0, bar_width, 12, fill=bar_color, outline="")
+            bar_canvas.grid(row=i, column=2, padx=(2, 4))
+
+            # Tooltip binding for top contributors
+            self.__bind_openness_tooltip(name_label, name)
+            self.__bind_openness_tooltip(score_label, name)
+            self.__bind_openness_tooltip(bar_canvas, name)
+
+    def __bind_openness_tooltip(self, widget, archetype_name):
+        """Bind hover tooltip showing top contributing cards for an archetype."""
+        def on_enter(event):
+            if not self.openness_tracker:
+                return
+            contributors = self.openness_tracker.get_top_contributors(archetype_name, count=3)
+            if not contributors:
+                return
+            lines = []
+            for c in contributors:
+                lines.append(f"{c['card_name']}: pick {c['pick_number']}, ATA {c['ata']:.1f} -> {c['signal']:+.1f}")
+            tooltip_text = "\n".join(lines)
+            self.__show_openness_tooltip(event, tooltip_text)
+
+        def on_leave(event):
+            self.__hide_openness_tooltip()
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
+    def __show_openness_tooltip(self, event, text):
+        """Show a simple tooltip near the cursor."""
+        self._openness_tooltip = tkinter.Toplevel()
+        self._openness_tooltip.wm_overrideredirect(True)
+        self._openness_tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+        label = tkinter.Label(
+            self._openness_tooltip, text=text, background="#333333",
+            foreground="#ffffff", relief="solid", borderwidth=1,
+            justify=tkinter.LEFT, padx=4, pady=2,
+        )
+        label.pack()
+
+    def __hide_openness_tooltip(self):
+        """Hide the openness tooltip."""
+        if self._openness_tooltip:
+            self._openness_tooltip.destroy()
+            self._openness_tooltip = None
+
+    def __open_archetype_editor(self):
+        """Open the Archetype Editor window."""
+        set_code = ""
+        if self.draft.draft_sets:
+            set_code = self.draft.draft_sets[0]
+        if not set_code:
+            messagebox.showinfo("Info", "Start a draft first to configure archetypes for the current set.")
+            return
+
+        def on_save():
+            """Reload archetype config after save."""
+            if self.configuration.features.archetype_openness_enabled:
+                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
+                archetype_config = load_archetype_config(config_path)
+                if archetype_config:
+                    self.openness_tracker = OpennessTracker(archetype_config)
+
+        from src.archetype_editor import ArchetypeEditor
+        ArchetypeEditor(
+            self.scale_factor,
+            self.fonts_dict,
+            self.draft.set_data,
+            set_code,
+            on_save_callback=on_save,
+        )
 
     def __arena_log_check(self):
         '''Function that monitors the Arena/MTGO log every 1000ms to determine if there's new draft data'''
@@ -3088,6 +3229,9 @@ class Overlay(ScaledWindow):
     def __reset_draft(self, full_reset):
         '''Clear all of the stored draft data (i.e., draft type, draft set, collected cards, etc.)'''
         self.draft.clear_draft(full_reset)
+        if full_reset:
+            self.openness_tracker = None
+            self.openness_frame.grid_remove()
 
     def __update_overlay_build(self):
         '''Checks the version.txt file in Github to determine if a new version of the application is available'''
