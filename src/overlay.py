@@ -18,7 +18,7 @@ from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
 from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory
-from src.utils import retrieve_local_set_list, open_file, clean_string
+from src.utils import retrieve_local_set_list, open_file, clean_string, AutocompleteEntry
 from src import constants
 from src.logger import create_logger
 from src.app_update import AppUpdate
@@ -179,87 +179,6 @@ def toggle_widget(input_widget, enable):
 def url_callback(event):
     webbrowser.open_new(event.widget.cget("text"))
 
-class AutocompleteEntry(tkinter.Entry):
-    def initialize(self, completion_list):
-        self.completion_list = completion_list
-        self.hitsIndex = -1
-        self.hits = []
-        self.autocompleted = False
-        self.current = ""
-        self.bind('<KeyRelease>', self.act_on_release)
-        self.bind('<KeyPress>', self.act_on_press)
-
-    def autocomplete(self):
-        self.current = self.get().lower()
-        self.hits = [item for item in self.completion_list if item.lower().startswith(self.current)]
-        if self.hits:
-            self.hitsIndex = 0  # Start with the first hit
-            self.display_autocompletion()
-        else:
-            self.hitsIndex = -1
-            self.remove_autocompletion()
-
-    def remove_autocompletion(self):
-        self.autocompleted = False
-
-    def display_autocompletion(self):
-        if self.hitsIndex == -1:
-            self.remove_autocompletion()  # Don't display anything if hitsIndex is -1
-            return
-        if self.hits:
-            cursor = self.index(tkinter.INSERT)
-            self.delete(0, tkinter.END)
-            self.insert(0, self.hits[self.hitsIndex])
-            self.select_range(cursor, tkinter.END)
-            self.icursor(cursor)
-            self.autocompleted = True
-        else:
-            self.autocompleted = False
-
-    def act_on_release(self, event):
-        if event.keysym in ('BackSpace', 'Delete'):
-            self.autocompleted = False
-            return
-
-        if event.keysym not in ('Down', 'Up', 'Tab', 'Right', 'Left'):
-            self.autocomplete()
-
-    def act_on_press(self, event):
-        if event.keysym == 'Left':
-            if self.autocompleted:
-                self.remove_autocompletion()
-                return "break"
-
-        if event.keysym in ('Down', 'Up', 'Tab'):
-            if self.select_present():
-                cursor = self.index(tkinter.SEL_FIRST)
-                if self.hits and self.current == self.get().lower()[0:cursor]:
-                    if event.keysym == 'Up':
-                        self.hitsIndex = (self.hitsIndex - 1) % len(self.hits)
-                    else:
-                        self.hitsIndex = (self.hitsIndex + 1) % len(self.hits)
-                    self.display_autocompletion()
-            else:
-                self.autocomplete()
-            return "break"
-
-        if event.keysym == 'Right':
-            if self.select_present():
-                self.selection_clear()
-                self.icursor(tkinter.END)
-                return "break"
-
-        if event.keysym in ('BackSpace', 'Delete'):
-            if self.autocompleted:
-                self.remove_autocompletion()
-
-    def select_present(self):
-        try:
-            self.index(tkinter.SEL_FIRST)
-            return True
-        except tkinter.TclError:
-            return False
-
 class Overlay(ScaledWindow):
     '''Class that handles all of the UI widgets'''
 
@@ -268,13 +187,16 @@ class Overlay(ScaledWindow):
         self.root = tkinter.Tk()
         self.root.title(f"Version {APPLICATION_VERSION:2.2f}")
         self.configuration, _ = read_configuration()
-        self.root.resizable(False, False)
+        self.root.resizable(True, False)
         self.last_download = 0
 
         self.__set_os_configuration()
 
         self.table_width = self._scale_value(
             self.configuration.settings.table_width)
+        self.root.minsize(width=self._scale_value(constants.MIN_TABLE_WIDTH), height=0)
+        self._resize_debounce_id = None
+        self._last_processed_width = None
 
         self.listener = None
         self.configuration.settings.arena_log_location = search_arena_log_locations(
@@ -388,6 +310,7 @@ class Overlay(ScaledWindow):
         self.data_source_checkbox_value = tkinter.IntVar(self.root)
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
+        self.openness_checkbox_value = tkinter.IntVar(self.root)
         self.best_in_column_threshold_value = tkinter.DoubleVar(self.root)
         self.platform_selection = tkinter.StringVar(self.root)
         self.mtgo_log_folder_value = tkinter.StringVar(self.root)
@@ -541,14 +464,16 @@ class Overlay(ScaledWindow):
             row=8, column=0, columnspan=2, sticky='nsew')
 
         self.status_frame.grid(row=9, column=0, columnspan=2, sticky='nsew')
-        self.pack_table_frame.grid(row=10, column=0, columnspan=2)
+        self.pack_table_frame.grid(row=10, column=0, columnspan=2, sticky='ew')
         self.openness_frame.grid(row=11, column=0, columnspan=2, sticky='ew')
         self.openness_frame.grid_remove()  # Hidden until archetypes loaded
         self.missing_frame.grid(row=12, column=0, columnspan=2, sticky='nsew')
-        self.missing_table_frame.grid(row=13, column=0, columnspan=2)
+        self.missing_table_frame.grid(row=13, column=0, columnspan=2, sticky='ew')
         self.stat_frame.grid(row=14, column=0, columnspan=2, sticky='nsew')
         self.stat_table.grid(row=15, column=0, columnspan=2, sticky='nsew')
         footnote_label.grid(row=16, column=0, columnspan=2)
+
+        self.root.bind("<Configure>", self.__on_window_resize)
 
         self.refresh_button.pack(expand=True, fill="both")
 
@@ -594,7 +519,56 @@ class Overlay(ScaledWindow):
         if self.log_check_id is not None:
             self.root.after_cancel(self.log_check_id)
             self.log_check_id = None
+        if self._resize_debounce_id is not None:
+            self.root.after_cancel(self._resize_debounce_id)
+            self.__save_table_width()
         self.root.destroy()
+
+    def __on_window_resize(self, event):
+        """Handle window horizontal resize — update table column widths proportionally"""
+        if event.widget != self.root:
+            return
+
+        new_width = event.width
+        if new_width <= 1 or new_width == self._last_processed_width:
+            return
+
+        self._last_processed_width = new_width
+        self.table_width = new_width
+        self.__resize_all_tables()
+
+        # Debounced config save
+        if self._resize_debounce_id is not None:
+            self.root.after_cancel(self._resize_debounce_id)
+        self._resize_debounce_id = self.root.after(500, self.__save_table_width)
+
+    def __resize_all_tables(self):
+        """Resize all main table columns proportionally to the current table_width"""
+        for table in (self.pack_table, self.missing_table):
+            displayed = table["displaycolumns"]
+            if not displayed or displayed == ('#all',):
+                continue
+            displayed = list(displayed)
+            n = len(displayed)
+            if n <= len(constants.TABLE_PROPORTIONS):
+                proportions = constants.TABLE_PROPORTIONS[n - 1]
+            else:
+                rest = (1.0 - 0.46) / (n - 1)
+                proportions = (0.46,) + (rest,) * (n - 1)
+            for col, prop in zip(displayed, proportions):
+                col_width = int(math.ceil(prop * self.table_width))
+                table.column(col, width=col_width)
+
+        for col, config in constants.STATS_HEADER_CONFIG.items():
+            col_width = int(math.ceil(config["width"] * self.table_width))
+            self.stat_table.column(col, width=col_width)
+
+    def __save_table_width(self):
+        """Persist the current table width to config.json (unscaled)"""
+        self._resize_debounce_id = None
+        unscaled_width = int(self.table_width / self.scale_factor)
+        self.configuration.settings.table_width = unscaled_width
+        write_configuration(self.configuration)
 
     def lift_window(self):
         '''Function that's used to minimize a window or set it as the top most window'''
@@ -1452,6 +1426,8 @@ class Overlay(ScaledWindow):
                 self.deck_filter_checkbox_value.get())
             self.configuration.settings.refresh_button_enabled = bool(
                 self.refresh_button_checkbox_value.get())
+            self.configuration.features.archetype_openness_enabled = bool(
+                self.openness_checkbox_value.get())
             self.configuration.settings.best_in_column_threshold = float(
                 self.best_in_column_threshold_value.get())
             self.configuration.settings.platform = self.platform_selection.get()
@@ -1541,6 +1517,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.deck_filter_enabled)
             self.refresh_button_checkbox_value.set(
                 self.configuration.settings.refresh_button_enabled)
+            self.openness_checkbox_value.set(
+                self.configuration.features.archetype_openness_enabled)
             self.best_in_column_threshold_value.set(
                 self.configuration.settings.best_in_column_threshold)
             self.platform_selection.set(
@@ -2485,6 +2463,13 @@ class Overlay(ScaledWindow):
                                              onvalue=1,
                                              offvalue=0)
 
+            openness_label = Label(
+                popup, text="Enable Deck Openness:", style="MainSectionsBold.TLabel", anchor="e")
+            openness_checkbox = Checkbutton(popup,
+                                             variable=self.openness_checkbox_value,
+                                             onvalue=1,
+                                             offvalue=0)
+
             card_colors_label = Label(
                 popup, text="Enable Row Colors:", style="MainSectionsBold.TLabel", anchor="e")
             card_colors_checkbox = Checkbutton(popup,
@@ -2738,6 +2723,14 @@ class Overlay(ScaledWindow):
                 row=row_count, column=0, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             save_screenshot_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
+            openness_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            openness_checkbox.grid(
                 row=row_count, column=1, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
@@ -3202,6 +3195,8 @@ class Overlay(ScaledWindow):
                 (self.deck_filter_checkbox_value, lambda: self.deck_filter_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.refresh_button_checkbox_value, lambda: self.refresh_button_checkbox_value.trace(
+                    "w", self.__update_settings_callback)),
+                (self.openness_checkbox_value, lambda: self.openness_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.taken_type_creature_checkbox_value, lambda: self.taken_type_creature_checkbox_value.trace(
                     "w", self.__update_taken_table)),
