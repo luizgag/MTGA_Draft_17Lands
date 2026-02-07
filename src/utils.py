@@ -4,6 +4,7 @@ import os
 import time
 import platform
 import subprocess
+import tkinter
 from enum import Enum
 from io import BytesIO
 from PIL import ImageGrab
@@ -221,3 +222,85 @@ def clean_string(input_string: str, uppercase: bool = True) -> str:
     for char in unwanted_chars:
         input_string = input_string.replace(char, '')
     return input_string.upper() if uppercase else input_string
+
+
+class AutocompleteEntry(tkinter.Entry):
+    def initialize(self, completion_list):
+        self.completion_list = completion_list
+        self.hitsIndex = -1
+        self.hits = []
+        self.autocompleted = False
+        self.current = ""
+        self.bind('<KeyRelease>', self.act_on_release)
+        self.bind('<KeyPress>', self.act_on_press)
+
+    def autocomplete(self):
+        self.current = self.get().lower()
+        self.hits = [item for item in self.completion_list if item.lower().startswith(self.current)]
+        if self.hits:
+            self.hitsIndex = 0  # Start with the first hit
+            self.display_autocompletion()
+        else:
+            self.hitsIndex = -1
+            self.remove_autocompletion()
+
+    def remove_autocompletion(self):
+        self.autocompleted = False
+
+    def display_autocompletion(self):
+        if self.hitsIndex == -1:
+            self.remove_autocompletion()  # Don't display anything if hitsIndex is -1
+            return
+        if self.hits:
+            cursor = self.index(tkinter.INSERT)
+            self.delete(0, tkinter.END)
+            self.insert(0, self.hits[self.hitsIndex])
+            self.select_range(cursor, tkinter.END)
+            self.icursor(cursor)
+            self.autocompleted = True
+        else:
+            self.autocompleted = False
+
+    def act_on_release(self, event):
+        if event.keysym in ('BackSpace', 'Delete'):
+            self.autocompleted = False
+            return
+
+        if event.keysym not in ('Down', 'Up', 'Tab', 'Right', 'Left'):
+            self.autocomplete()
+
+    def act_on_press(self, event):
+        if event.keysym == 'Left':
+            if self.autocompleted:
+                self.remove_autocompletion()
+                return "break"
+
+        if event.keysym in ('Down', 'Up', 'Tab'):
+            if self.select_present():
+                cursor = self.index(tkinter.SEL_FIRST)
+                if self.hits and self.current == self.get().lower()[0:cursor]:
+                    if event.keysym == 'Up':
+                        self.hitsIndex = (self.hitsIndex - 1) % len(self.hits)
+                    else:
+                        self.hitsIndex = (self.hitsIndex + 1) % len(self.hits)
+                    self.display_autocompletion()
+            else:
+                self.autocomplete()
+            return "break"
+
+        if event.keysym == 'Right':
+            if self.select_present():
+                self.selection_clear()
+                self.icursor(tkinter.END)
+                return "break"
+
+        if event.keysym in ('BackSpace', 'Delete'):
+            if self.autocompleted:
+                self.remove_autocompletion()
+
+    def select_present(self):
+        try:
+            self.index(tkinter.SEL_FIRST)
+            return True
+        except tkinter.TclError:
+            return False

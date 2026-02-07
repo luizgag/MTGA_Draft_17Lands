@@ -22,6 +22,7 @@ class ArchetypeConfig(BaseModel):
     set_code: str
     detection_threshold: float = 5.0
     scoring_method: str = "simple"
+    weight_curve: str = "linear"
     pack_weights: List[float] = Field(default_factory=lambda: [1.0, 1.0, 1.0])
     archetypes: List[Archetype] = Field(default_factory=list)
 
@@ -32,7 +33,10 @@ def load_archetype_config(file_path: str) -> Optional[ArchetypeConfig]:
         with open(file_path, "r", encoding="utf8", errors="replace") as f:
             data = json.loads(f.read())
         return ArchetypeConfig.model_validate(data)
-    except (FileNotFoundError, json.JSONDecodeError, Exception) as error:
+    except FileNotFoundError:
+        logger.info("No archetype config found at %s, will use defaults", file_path)
+        return None
+    except (json.JSONDecodeError, Exception) as error:
         logger.error("Failed to load archetype config: %s", error)
         return None
 
@@ -131,6 +135,7 @@ class OpennessTracker:
 
     def __init__(self, config: ArchetypeConfig):
         self.scoring_method = config.scoring_method
+        self.weight_curve = config.weight_curve
         self.pack_weights = config.pack_weights
         self.archetypes = config.archetypes
         self.signals: List[Dict] = []
@@ -138,9 +143,12 @@ class OpennessTracker:
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record signals from a pack of cards.
 
+        Positive signal = card is wheeling later than expected (archetype is OPEN).
+        Negative signal = card was taken earlier than expected (archetype is CLOSED).
+
         Args:
             pack_cards: list of card dicts from the dataset
-            pick_number: 1-based pick position within the pack
+            pick_number: 1-based pick position within the pack (resets each pack)
             pack_number: 0-indexed pack number (0=pack1, 1=pack2, 2=pack3)
         """
         pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
@@ -160,7 +168,8 @@ class OpennessTracker:
                 if self.scoring_method == "normalized":
                     if ata == 0.0:
                         continue
-                    raw_signal = (pick_number - ata) / ata
+                    pick_weight = self._pick_weight(pick_number, max_picks=14)
+                    raw_signal = ((pick_number - ata) / ata) * pick_weight
                 else:
                     raw_signal = pick_number - ata
 
@@ -174,8 +183,23 @@ class OpennessTracker:
                     "signal": signal,
                 })
 
+    def _pick_weight(self, pick_number: int, max_picks: int = 14) -> float:
+        """Weight from 0.0 (pick 1) to 1.0 (final pick), shaped by weight_curve."""
+        if max_picks <= 1:
+            return 1.0
+        t = max(0.0, (pick_number - 1) / (max_picks - 1))
+        if self.weight_curve == "sqrt":
+            return t ** 0.5
+        elif self.weight_curve == "squared":
+            return t ** 2
+        else:  # "linear"
+            return t
+
     def get_scores(self) -> Dict[str, float]:
         """Get aggregated openness scores for all archetypes.
+
+        Positive score = archetype is OPEN (cards wheeling later than ATA).
+        Negative score = archetype is CLOSED (cards taken earlier than ATA).
 
         Returns dict of {archetype_name: total_score}.
         Archetypes with no signals return 0.0.

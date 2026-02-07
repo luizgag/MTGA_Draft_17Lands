@@ -1605,7 +1605,8 @@ class Overlay(ScaledWindow):
 
         # Update openness scoring
         if self.openness_tracker and pack_cards:
-            self.openness_tracker.record_pack(pack_cards, current_pick, current_pack - 1)
+            pick_in_pack = self.draft.retrieve_current_pick_in_pack()
+            self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
             self.__update_openness_panel()
 
         self.__update_missing_table(missing_cards,

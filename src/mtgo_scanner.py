@@ -271,6 +271,10 @@ class MtgoScanner:
         '''Return the current pack and pick numbers'''
         return self.current_pack, self.current_pick
 
+    def retrieve_current_pick_in_pack(self):
+        '''Return the pick number within the current pack (1-based, resets each pack)'''
+        return self.current_pick_in_pack
+
     def retrieve_current_limited_event(self):
         '''Return the set code string and event type string'''
         event_set = ""

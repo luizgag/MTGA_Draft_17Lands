@@ -23,6 +23,7 @@ from src.constants import (
     DATA_FIELD_NAME,
 )
 from src.logger import create_logger
+from src.utils import AutocompleteEntry
 
 logger = create_logger()
 
@@ -43,6 +44,7 @@ class ArchetypeEditor:
         self.set_code = set_code
         self.on_save_callback = on_save_callback
         self.selected_archetype_index = None
+        self._dirty = False
 
         # Load existing config or create empty
         config_path = os.path.join(ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
@@ -54,6 +56,7 @@ class ArchetypeEditor:
         self.window.attributes("-topmost", True)
         self.window.resizable(width=True, height=True)
         self.window.geometry("900x600")
+        self.window.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_ui()
         self._refresh_archetype_list()
@@ -113,9 +116,18 @@ class ArchetypeEditor:
 
         ttk.Button(top_frame, text="Recalculate", command=self._recalculate_weights).pack(side=tkinter.LEFT, padx=4)
 
-        # Card table
+        # Card table — use a custom style so text is visible in dark mode
+        style = ttk.Style()
+        style.configure("Editor.Treeview",
+                        background="#3d3d3d",
+                        foreground="#ffffff",
+                        fieldbackground="#3d3d3d")
+        style.configure("Editor.Treeview.Heading",
+                        foreground="black")
+
         columns = ("card_name", "weight", "ata")
-        self.card_tree = ttk.Treeview(right_frame, columns=columns, show="headings", height=20)
+        self.card_tree = ttk.Treeview(right_frame, columns=columns, show="headings",
+                                      height=20, style="Editor.Treeview")
         self.card_tree.heading("card_name", text="Card Name")
         self.card_tree.heading("weight", text="Weight")
         self.card_tree.heading("ata", text="ATA")
@@ -129,8 +141,9 @@ class ArchetypeEditor:
         card_btn_frame.pack(fill=tkinter.X, padx=4, pady=4)
 
         ttk.Label(card_btn_frame, text="Add card:").pack(side=tkinter.LEFT)
-        self.add_card_var = tkinter.StringVar()
-        self.add_card_entry = ttk.Entry(card_btn_frame, textvariable=self.add_card_var, width=25)
+        self.add_card_entry = AutocompleteEntry(card_btn_frame, width=25)
+        card_names = self.dataset.get_all_names() if self.dataset else []
+        self.add_card_entry.initialize(card_names)
         self.add_card_entry.pack(side=tkinter.LEFT, padx=4)
         ttk.Button(card_btn_frame, text="Add", command=self._add_card).pack(side=tkinter.LEFT, padx=2)
         ttk.Button(card_btn_frame, text="Remove Selected", command=self._remove_card).pack(side=tkinter.LEFT, padx=2)
@@ -147,6 +160,12 @@ class ArchetypeEditor:
         scoring_combo = ttk.Combobox(bottom_frame, textvariable=self.scoring_var,
                                       values=["simple", "normalized"], width=12, state="readonly")
         scoring_combo.pack(side=tkinter.LEFT, padx=4)
+
+        ttk.Label(bottom_frame, text="Curve:").pack(side=tkinter.LEFT, padx=(8, 0))
+        self.weight_curve_var = tkinter.StringVar(value=self.config.weight_curve)
+        curve_combo = ttk.Combobox(bottom_frame, textvariable=self.weight_curve_var,
+                                    values=["linear", "sqrt", "squared"], width=8, state="readonly")
+        curve_combo.pack(side=tkinter.LEFT, padx=4)
 
         ttk.Label(bottom_frame, text="Pack Weights:").pack(side=tkinter.LEFT, padx=(8, 0))
         self.pack_weight_vars = []
@@ -211,13 +230,23 @@ class ArchetypeEditor:
         self.config.archetypes = archetypes
         self.config.detection_threshold = threshold
         self._refresh_archetype_list()
-        self.selected_archetype_index = None
+
+        # Auto-select the first archetype and show its cards
+        if self.config.archetypes:
+            self.archetype_listbox.selection_set(0)
+            self._on_archetype_select(None)
+        else:
+            self.selected_archetype_index = None
+
+        # Auto-save so archetypes persist between sessions
+        self._save()
 
     def _add_custom_archetype(self):
         """Add a new empty custom archetype."""
         name = f"Custom {len(self.config.archetypes) + 1}"
         arch = Archetype(name=name, auto_weights=False)
         self.config.archetypes.append(arch)
+        self._dirty = True
         self._refresh_archetype_list()
         self.archetype_listbox.selection_set(len(self.config.archetypes) - 1)
         self._on_archetype_select(None)
@@ -228,6 +257,7 @@ class ArchetypeEditor:
             return
         del self.config.archetypes[self.selected_archetype_index]
         self.selected_archetype_index = None
+        self._dirty = True
         self._refresh_archetype_list()
         for row in self.card_tree.get_children():
             self.card_tree.delete(row)
@@ -236,13 +266,14 @@ class ArchetypeEditor:
         """Add a card to the selected archetype."""
         if self.selected_archetype_index is None:
             return
-        card_name = self.add_card_var.get().strip()
+        card_name = self.add_card_entry.get().strip()
         if not card_name:
             return
         arch = self.config.archetypes[self.selected_archetype_index]
         if card_name not in arch.cards:
             arch.cards[card_name] = 0.5
-        self.add_card_var.set("")
+            self._dirty = True
+        self.add_card_entry.delete(0, tkinter.END)
         self._refresh_card_table(arch)
         self._refresh_archetype_list()
 
@@ -257,6 +288,7 @@ class ArchetypeEditor:
         for item in selection:
             card_name = self.card_tree.item(item)["values"][0]
             arch.cards.pop(str(card_name), None)
+        self._dirty = True
         self._refresh_card_table(arch)
         self._refresh_archetype_list()
 
@@ -289,6 +321,7 @@ class ArchetypeEditor:
                 new_weight = max(0.0, min(1.0, new_weight))
                 arch = self.config.archetypes[self.selected_archetype_index]
                 arch.cards[card_name] = round(new_weight, 4)
+                self._dirty = True
                 self._refresh_card_table(arch)
             except ValueError:
                 pass
@@ -307,6 +340,7 @@ class ArchetypeEditor:
             return
         arch.cards = calculate_card_weights(self.dataset, arch.color_pair)
         arch.auto_weights = True
+        self._dirty = True
         self._refresh_card_table(arch)
         self._refresh_archetype_list()
 
@@ -322,6 +356,7 @@ class ArchetypeEditor:
 
         # Update global settings
         self.config.scoring_method = self.scoring_var.get()
+        self.config.weight_curve = self.weight_curve_var.get()
         try:
             self.config.pack_weights = [float(v.get()) for v in self.pack_weight_vars]
         except ValueError:
@@ -330,6 +365,7 @@ class ArchetypeEditor:
 
         config_path = os.path.join(ARCHETYPES_FOLDER, f"{self.set_code}_archetypes.json")
         if save_archetype_config(self.config, config_path):
+            self._dirty = False
             self._refresh_archetype_list()
             if self.on_save_callback:
                 self.on_save_callback()
@@ -340,3 +376,17 @@ class ArchetypeEditor:
         """Reset everything to auto-detected archetypes."""
         self._auto_detect()
         self._save()
+
+    def _on_close(self):
+        """Handle window close with unsaved changes warning."""
+        if self._dirty:
+            result = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                "You have unsaved changes. Save before closing?",
+                parent=self.window,
+            )
+            if result is None:  # Cancel
+                return
+            if result:  # Yes
+                self._save()
+        self.window.destroy()

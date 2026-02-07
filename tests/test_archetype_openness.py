@@ -218,9 +218,10 @@ class TestOpennessTrackerSimple:
 
 
 class TestOpennessTrackerNormalized:
-    """Tests for normalized scoring: signal = ((pick - ATA) / ATA) * weight * pack_weight."""
+    """Tests for normalized scoring: signal = ((pick - ATA) / ATA) * pick_weight * card_weight * pack_weight."""
 
     def test_normalized_scoring(self):
+        """pick=6, ata=2.0, weight=0.9, linear pick_weight(6)=5/13."""
         config = ArchetypeConfig(
             set_code="TST",
             scoring_method="normalized",
@@ -229,7 +230,8 @@ class TestOpennessTrackerNormalized:
         tracker = OpennessTracker(config)
         tracker.record_pack([_make_card("Elf Lord", ata=2.0)], pick_number=6, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"] == pytest.approx(1.8, abs=0.01)
+        # ((6-2)/2) * (5/13) * 0.9 = 2.0 * 0.3846 * 0.9 ≈ 0.6923
+        assert scores["BG Elves"] == pytest.approx(0.6923, abs=0.01)
 
     def test_normalized_emphasizes_low_ata(self):
         config = ArchetypeConfig(
@@ -241,7 +243,9 @@ class TestOpennessTrackerNormalized:
         tracker.record_pack([_make_card("Early", ata=2.0)], pick_number=6, pack_number=0)
         tracker.record_pack([_make_card("Late", ata=8.0)], pick_number=12, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["Test"] == pytest.approx(2.5, abs=0.01)
+        # Early: ((6-2)/2) * (5/13) * 1.0 = 0.7692
+        # Late: ((12-8)/8) * (11/13) * 1.0 = 0.4231
+        assert scores["Test"] == pytest.approx(1.1923, abs=0.01)
 
     def test_normalized_zero_ata_skipped(self):
         config = ArchetypeConfig(
@@ -318,3 +322,121 @@ class TestEndToEnd:
 
         scores = tracker.get_scores()
         assert len(scores) == len(archetypes)
+
+
+# --- Pick-position weighting tests ---
+
+class TestPickWeight:
+    """Tests for _pick_weight with different curves."""
+
+    def _make_tracker(self, curve="linear"):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="normalized",
+            weight_curve=curve,
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        return OpennessTracker(config)
+
+    def test_pick_1_produces_zero_weight(self):
+        """P1P1 should contribute zero signal (everyone sees the same cards)."""
+        tracker = self._make_tracker("linear")
+        assert tracker._pick_weight(1, max_picks=14) == pytest.approx(0.0)
+
+    def test_pick_14_produces_full_weight(self):
+        """Last pick should have weight 1.0."""
+        tracker = self._make_tracker("linear")
+        assert tracker._pick_weight(14, max_picks=14) == pytest.approx(1.0)
+
+    def test_linear_midpoint(self):
+        """Linear curve: midpoint pick should be ~0.5."""
+        tracker = self._make_tracker("linear")
+        # pick 8 of 14: (8-1)/(14-1) = 7/13 ≈ 0.5385
+        assert tracker._pick_weight(8, max_picks=14) == pytest.approx(7.0 / 13.0)
+
+    def test_sqrt_curve(self):
+        """Sqrt curve rises faster early."""
+        tracker = self._make_tracker("sqrt")
+        # pick 4 of 14: t = 3/13 ≈ 0.2308, sqrt(0.2308) ≈ 0.4804
+        t = 3.0 / 13.0
+        assert tracker._pick_weight(4, max_picks=14) == pytest.approx(t ** 0.5)
+
+    def test_squared_curve(self):
+        """Squared curve rises slower early."""
+        tracker = self._make_tracker("squared")
+        # pick 4 of 14: t = 3/13 ≈ 0.2308, t^2 ≈ 0.0533
+        t = 3.0 / 13.0
+        assert tracker._pick_weight(4, max_picks=14) == pytest.approx(t ** 2)
+
+    def test_max_picks_one_returns_one(self):
+        """Edge case: if max_picks <= 1, weight is always 1.0."""
+        tracker = self._make_tracker("linear")
+        assert tracker._pick_weight(1, max_picks=1) == 1.0
+
+    def test_p1p1_normalized_produces_zero_signal(self):
+        """At pick 1, normalized scoring gives zero signal regardless of ATA."""
+        tracker = self._make_tracker("linear")
+        tracker.record_pack([_make_card("Card", ata=3.0)], pick_number=1, pack_number=0)
+        scores = tracker.get_scores()
+        assert scores["Test"] == pytest.approx(0.0)
+
+    def test_late_pick_high_quality_card_strong_signal(self):
+        """A card with low ATA seen at a late pick should produce a strong positive signal."""
+        tracker = self._make_tracker("linear")
+        # pick 13 of 14: pick_weight = 12/13 ≈ 0.923
+        # ata=2.0: raw = ((13-2)/2) * 0.923 = 5.5 * 0.923 ≈ 5.077
+        tracker.record_pack([_make_card("Card", ata=2.0)], pick_number=13, pack_number=0)
+        scores = tracker.get_scores()
+        expected = ((13 - 2) / 2.0) * (12.0 / 13.0) * 1.0
+        assert scores["Test"] == pytest.approx(expected, abs=0.01)
+
+
+class TestWeightCurveConfig:
+    """Tests for weight_curve configuration field."""
+
+    def test_default_weight_curve(self):
+        """Default weight curve is linear."""
+        config = ArchetypeConfig(set_code="TST")
+        assert config.weight_curve == "linear"
+
+    def test_weight_curve_round_trip(self, tmp_path):
+        """weight_curve persists through save/load cycle."""
+        config = ArchetypeConfig(set_code="TST", weight_curve="sqrt")
+        file_path = str(tmp_path / "test_config.json")
+        save_archetype_config(config, file_path)
+        loaded = load_archetype_config(file_path)
+        assert loaded.weight_curve == "sqrt"
+
+    def test_old_config_without_weight_curve_gets_default(self):
+        """Config JSON missing weight_curve field gets 'linear' default."""
+        data = {"set_code": "TST", "scoring_method": "normalized"}
+        config = ArchetypeConfig.model_validate(data)
+        assert config.weight_curve == "linear"
+
+
+class TestMtgoPickConversion:
+    """Tests verifying MTGO pick-in-pack vs Arena pick behavior."""
+
+    def test_arena_pick_is_per_pack(self, tmp_path):
+        """ArenaScanner.retrieve_current_pick_in_pack returns current_pick (already per-pack)."""
+        from src.log_scanner import ArenaScanner
+        scanner = ArenaScanner(str(tmp_path / "Player.log"), set_list=[])
+        scanner.current_pick = 5
+        assert scanner.retrieve_current_pick_in_pack() == 5
+
+    def test_mtgo_pick_in_pack_resets(self, tmp_path):
+        """MtgoScanner.retrieve_current_pick_in_pack returns per-pack pick, not sequential."""
+        from src.mtgo_scanner import MtgoScanner
+        scanner = MtgoScanner(str(tmp_path), set_list=[])
+        scanner.current_pick_in_pack = 3
+        assert scanner.retrieve_current_pick_in_pack() == 3
+
+    def test_mtgo_sequential_vs_per_pack(self, tmp_path):
+        """MTGO current_pick is sequential (16 for P2P1), but pick_in_pack is 1."""
+        from src.mtgo_scanner import MtgoScanner
+        scanner = MtgoScanner(str(tmp_path), set_list=[])
+        # Simulate P2P1: sequential pick is 16, but pick_in_pack is 1
+        scanner.current_pick = 16
+        scanner.current_pick_in_pack = 1
+        assert scanner.retrieve_current_pick_in_pack() == 1
+        # The openness tracker should use 1, not 16

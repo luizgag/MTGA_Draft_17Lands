@@ -1139,6 +1139,10 @@ class ArenaScanner:
         '''Return the current pack and pick numbers (p1p1 is current_pack=1, current_pick=1)'''
         return self.current_pack, self.current_pick
 
+    def retrieve_current_pick_in_pack(self):
+        '''Return the pick number within the current pack (same as current_pick for Arena)'''
+        return self.current_pick
+
     def retrieve_current_limited_event(self):
         '''Return the set code string and event type string'''
         event_set = ""
