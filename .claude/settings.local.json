@@ -14,7 +14,15 @@
       "Bash(git commit:*)",
       "Bash(.venv/bin/pytest tests/test_archetype_openness.py tests/test_overlay.py -v)",
       "Bash(grep:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:www.17lands.com)",
+      "WebFetch(domain:blog.17lands.com)",
+      "WebFetch(domain:draftsim.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebSearch",
+      "WebFetch(domain:www.sciencedirect.com)",
+      "WebFetch(domain:www.sbgames.org)",
+      "WebFetch(domain:mtghealth.org)"
     ]
   }
 }
