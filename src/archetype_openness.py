@@ -51,6 +51,7 @@ def save_archetype_config(config: ArchetypeConfig, file_path: str) -> bool:
 
 from src.constants import (
     DATA_FIELD_NAME,
+    DATA_FIELD_ATA,
     DATA_FIELD_NGP,
     DATA_FIELD_DECK_COLORS,
     DECK_COLORS,
@@ -123,3 +124,84 @@ def auto_detect_archetypes(dataset, threshold_percent: float = 5.0) -> List[Arch
             ))
 
     return archetypes
+
+
+class OpennessTracker:
+    """Tracks archetype openness signals during a draft."""
+
+    def __init__(self, config: ArchetypeConfig):
+        self.scoring_method = config.scoring_method
+        self.pack_weights = config.pack_weights
+        self.archetypes = config.archetypes
+        self.signals: List[Dict] = []
+
+    def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
+        """Record signals from a pack of cards.
+
+        Args:
+            pack_cards: list of card dicts from the dataset
+            pick_number: 1-based pick position within the pack
+            pack_number: 0-indexed pack number (0=pack1, 1=pack2, 2=pack3)
+        """
+        pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
+
+        for card in pack_cards:
+            card_name = card.get(DATA_FIELD_NAME, "")
+            deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+            all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+            ata = all_decks.get(DATA_FIELD_ATA, 0.0)
+
+            for archetype in self.archetypes:
+                if card_name not in archetype.cards:
+                    continue
+
+                card_weight = archetype.cards[card_name]
+
+                if self.scoring_method == "normalized":
+                    if ata == 0.0:
+                        continue
+                    raw_signal = (pick_number - ata) / ata
+                else:
+                    raw_signal = pick_number - ata
+
+                signal = raw_signal * card_weight * pack_weight
+
+                self.signals.append({
+                    "archetype": archetype.name,
+                    "card_name": card_name,
+                    "pick_number": pick_number,
+                    "ata": ata,
+                    "signal": signal,
+                })
+
+    def get_scores(self) -> Dict[str, float]:
+        """Get aggregated openness scores for all archetypes.
+
+        Returns dict of {archetype_name: total_score}.
+        Archetypes with no signals return 0.0.
+        """
+        scores = {arch.name: 0.0 for arch in self.archetypes}
+        for sig in self.signals:
+            scores[sig["archetype"]] += sig["signal"]
+        return scores
+
+    def get_top_contributors(self, archetype_name: str, count: int = 3) -> List[Dict]:
+        """Get the top N contributing signals for an archetype, sorted by absolute signal.
+
+        Returns list of dicts: [{"card_name", "pick_number", "ata", "signal"}, ...]
+        """
+        arch_signals = [s for s in self.signals if s["archetype"] == archetype_name]
+        arch_signals.sort(key=lambda s: abs(s["signal"]), reverse=True)
+        return [
+            {
+                "card_name": s["card_name"],
+                "pick_number": s["pick_number"],
+                "ata": s["ata"],
+                "signal": s["signal"],
+            }
+            for s in arch_signals[:count]
+        ]
+
+    def reset(self) -> None:
+        """Clear all accumulated signals."""
+        self.signals.clear()
