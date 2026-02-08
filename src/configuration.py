@@ -24,8 +24,6 @@ class DatasetSource(BaseModel):
     """A single 17Lands data source with filter configuration."""
     format: str = "PremierDraft"
     user_group: str = "All"
-    start_date: str = ""
-    end_date: str = ""
     weight: float = 1.0
 
 

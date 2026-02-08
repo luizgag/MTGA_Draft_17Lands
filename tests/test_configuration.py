@@ -132,7 +132,7 @@ def test_old_dataset_sources_ignored(tmp_path):
     """Old config.json with dataset_sources key doesn't crash."""
     config_dict = Configuration().model_dump()
     config_dict["settings"]["dataset_sources"] = [
-        {"format": "PremierDraft", "user_group": "All", "start_date": "", "end_date": "", "weight": 1.0}
+        {"format": "PremierDraft", "user_group": "All", "weight": 1.0}
     ]
 
     file_location = tmp_path / "config.json"
@@ -142,6 +142,27 @@ def test_old_dataset_sources_ignored(tmp_path):
     config, success = read_configuration(str(file_location))
     assert success is True
     assert config.settings.set_sources == {}
+
+
+def test_old_config_with_date_fields_in_sources(tmp_path):
+    """Old config.json with start_date/end_date in DatasetSource loads without error."""
+    config_dict = Configuration().model_dump()
+    config_dict["settings"]["set_sources"] = {
+        "ECL": [
+            {"format": "PremierDraft", "user_group": "All", "start_date": "2025-01-01", "end_date": "2025-06-01", "weight": 1.0},
+        ]
+    }
+
+    file_location = tmp_path / "config.json"
+    with open(file_location, "w") as f:
+        json.dump(config_dict, f)
+
+    config, success = read_configuration(str(file_location))
+    assert success is True
+    assert len(config.settings.set_sources["ECL"]) == 1
+    assert config.settings.set_sources["ECL"][0].format == "PremierDraft"
+    assert config.settings.set_sources["ECL"][0].weight == 1.0
+    assert not hasattr(config.settings.set_sources["ECL"][0], "start_date") or "start_date" not in config.settings.set_sources["ECL"][0].model_fields
 
 
 def test_set_sources_roundtrip(tmp_path):

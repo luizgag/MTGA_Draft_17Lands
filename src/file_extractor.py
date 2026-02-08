@@ -88,7 +88,7 @@ def _merge_color_ratings(active):
                 total_weighted += cr[color] * w
                 total_weight += w
         if total_weight > 0:
-            merged[color] = total_weighted / total_weight
+            merged[color] = round(total_weighted / total_weight, 1)
 
     return merged
 
@@ -161,14 +161,22 @@ def _merge_deck_colors(sources):
                 )
             else:
                 # Weighted average for rate/average fields
+                # Skip sources where the corresponding count is 0 (no data)
+                count_field = constants.WIN_RATE_FIELDS_DICT.get(field)
                 total_weighted = 0.0
                 total_weight = 0.0
                 for stats, w in color_sources:
-                    if field in stats:
-                        total_weighted += stats[field] * w
-                        total_weight += w
+                    if field not in stats:
+                        continue
+                    # For win rate fields, skip if their count field is 0
+                    # For other fields (alsa, ata, iwd), skip if ngp is 0
+                    check_field = count_field if count_field else constants.DATA_FIELD_NGP
+                    if stats.get(check_field, 0) == 0:
+                        continue
+                    total_weighted += stats[field] * w
+                    total_weight += w
                 if total_weight > 0:
-                    merged_stats[field] = total_weighted / total_weight
+                    merged_stats[field] = round(total_weighted / total_weight, 1)
                 else:
                     merged_stats[field] = 0.0
 

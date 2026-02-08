@@ -372,8 +372,8 @@ class TestMergeDatasets:
         result = merge_datasets([ds_premier, ds_trad], [0.7, 0.3])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
-        expected_gihwr = (55.0 * 0.7 + 58.0 * 0.3) / (0.7 + 0.3)
-        expected_ata = (4.0 * 0.7 + 3.5 * 0.3) / (0.7 + 0.3)
+        expected_gihwr = round((55.0 * 0.7 + 58.0 * 0.3) / (0.7 + 0.3), 1)
+        expected_ata = round((4.0 * 0.7 + 3.5 * 0.3) / (0.7 + 0.3), 1)
         assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(expected_gihwr)
         assert ad[constants.DATA_FIELD_ATA] == pytest.approx(expected_ata)
         # Counts are always summed regardless of weight
@@ -410,8 +410,10 @@ class TestMergeDatasets:
 
     def test_merge_rate_fields_are_weighted_averaged(self):
         """gihwr, ohwr, gpwr, gnswr, gdwr are weighted-averaged."""
-        stats_a = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0, alsa=5.0, ata=3.0, iwd=2.0)
-        stats_b = _stats(gihwr=60.0, ohwr=58.0, gpwr=62.0, gnswr=56.0, gdwr=64.0, alsa=3.0, ata=2.0, iwd=4.0)
+        stats_a = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0, alsa=5.0, ata=3.0, iwd=2.0,
+                         ngp=1000, ngoh=500, gih=800, ngnd=200, ngd=600)
+        stats_b = _stats(gihwr=60.0, ohwr=58.0, gpwr=62.0, gnswr=56.0, gdwr=64.0, alsa=3.0, ata=2.0, iwd=4.0,
+                         ngp=800, ngoh=400, gih=600, ngnd=150, ngd=500)
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
 
@@ -428,7 +430,7 @@ class TestMergeDatasets:
             (constants.DATA_FIELD_ATA, 3.0, 2.0),
             (constants.DATA_FIELD_IWD, 2.0, 4.0),
         ]:
-            expected = (va * 0.6 + vb * 0.4) / (0.6 + 0.4)
+            expected = round((va * 0.6 + vb * 0.4) / (0.6 + 0.4), 1)
             assert ad[field] == pytest.approx(expected), f"Field {field} mismatch"
 
     def test_merge_nonumeric_fields_from_first_source(self):
@@ -451,10 +453,50 @@ class TestMergeDatasets:
         ds_b = _make_dataset({}, color_ratings={"WU": 60.0, "BR": 52.0}, game_count=4000)
 
         result = merge_datasets([ds_a, ds_b], [0.7, 0.3])
-        expected_wu = (55.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3)
-        expected_br = (50.0 * 0.7 + 52.0 * 0.3) / (0.7 + 0.3)
+        expected_wu = round((55.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3), 1)
+        expected_br = round((50.0 * 0.7 + 52.0 * 0.3) / (0.7 + 0.3), 1)
         assert result["color_ratings"]["WU"] == pytest.approx(expected_wu)
         assert result["color_ratings"]["BR"] == pytest.approx(expected_br)
+
+    def test_merge_zero_count_rate_excluded(self):
+        """Rate fields with zero corresponding count are excluded from average.
+
+        Reproduces real scenario: Premier has OHWR=50.26 (ngoh=500),
+        Traditional has OHWR=0.0 (ngoh=0 = no data). The 0.0 should NOT
+        drag the average down to 25.13.
+        """
+        stats_premier = _stats(gihwr=56.42, ohwr=50.26, gpwr=57.94, ngp=1000, ngoh=500, gih=800)
+        stats_trad = _stats(gihwr=0.0, ohwr=0.0, gpwr=0.0, ngp=0, ngoh=0, gih=0)
+        ds_a = _make_dataset({"1": _make_card("Wayfinder", ["U"], ["Creature"], "common", 2, "{1}{U}", [],
+                                              _make_deck_colors(stats_premier))})
+        ds_b = _make_dataset({"1": _make_card("Wayfinder", ["U"], ["Creature"], "common", 2, "{1}{U}", [],
+                                              _make_deck_colors(stats_trad))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        # Source B has no data (all counts are 0), so rates should come entirely from source A
+        assert ad[constants.DATA_FIELD_OHWR] == pytest.approx(50.26, abs=0.1)
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(56.42, abs=0.1)
+        assert ad[constants.DATA_FIELD_GPWR] == pytest.approx(57.94, abs=0.1)
+        # Counts are still summed (0 + real = real)
+        assert ad[constants.DATA_FIELD_NGP] == 1000
+        assert ad[constants.DATA_FIELD_NGOH] == 500
+
+    def test_merge_partial_zero_count(self):
+        """One source has OHWR data but not GIHWR — only the missing rate is excluded."""
+        stats_a = _stats(gihwr=55.0, ohwr=50.0, ngp=1000, ngoh=500, gih=800)
+        stats_b = _stats(gihwr=60.0, ohwr=0.0, ngp=500, ngoh=0, gih=300)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        # GIHWR: both have gih>0, so average normally
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(57.5, abs=0.1)
+        # OHWR: source B has ngoh=0, so only source A contributes
+        assert ad[constants.DATA_FIELD_OHWR] == pytest.approx(50.0, abs=0.1)
 
     def test_merge_zero_weight_source_excluded(self):
         """A source with weight=0.0 contributes nothing."""

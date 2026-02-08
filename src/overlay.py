@@ -1837,25 +1837,6 @@ class Overlay(ScaledWindow):
         except Exception as error:
             logger.error(error)
 
-    def __update_event_format(self, event_widget, event_selection, set_selection, format_list, *_):
-        '''Function that's used to update the Event options in the Download Dataset window
-           Example: When a user selects a set, the available event formats (e.g., PremierDraft, Sealed)
-           are refreshed in the Event dropdown so that only formats valid for that set are shown
-        '''
-        try:
-            set_data = format_list[set_selection.get()]
-
-            if set_data.formats:
-                menu = event_widget['menu']
-                menu.delete(0, tkinter.END)
-                for event_format in set_data.formats:
-                    menu.add_command(label=event_format, command=lambda value=event_format: event_selection.set(value))  # add new ones
-
-                event_selection.set(set_data.formats[0])
-            self.root.update()
-        except Exception as error:
-            logger.error(error)
-
     def __close_set_view_window(self, popup):
         self.sets_window_open = False
         popup.destroy()
@@ -1914,10 +1895,6 @@ class Overlay(ScaledWindow):
                               text="Set:",
                               style="SetOptions.TLabel",
                               anchor="e")
-            event_label = Label(popup,
-                                text="Event:",
-                                style="SetOptions.TLabel",
-                                anchor="e")
             start_label = Label(popup,
                                 text="Start Date:",
                                 style="SetOptions.TLabel",
@@ -1926,22 +1903,11 @@ class Overlay(ScaledWindow):
                               text="End Date:",
                               style="SetOptions.TLabel",
                               anchor="e")
-            group_label = Label(popup,
-                                text="User Group:",
-                                style="SetOptions.TLabel",
-                                anchor="e")
-            draft_choices = constants.LIMITED_TYPE_LIST
 
             status_text = tkinter.StringVar()
             status_label = Label(popup, textvariable=status_text,
                                  style="Status.TLabel", anchor="c")
             status_text.set("Retrieving Set List")
-
-            event_value = tkinter.StringVar(self.root)
-            event_entry = OptionMenu(
-                popup, event_value, draft_choices[0], *draft_choices)
-            menu = self.root.nametowidget(event_entry['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
 
             start_entry = tkinter.Entry(popup)
             start_entry.insert(tkinter.END, START_DATE_DEFAULT)
@@ -1959,26 +1925,15 @@ class Overlay(ScaledWindow):
             set_value.trace_add("write", lambda *args, start=start_entry, selection=set_value,
                             set_list=sets: self.__update_set_start_date(start, selection, set_list, *args))
 
-            set_value.trace_add("write", lambda *args, event_widget=event_entry, event_selection=event_value, set_selection=set_value,
-                            set_list=sets: self.__update_event_format(event_widget, event_selection, set_selection, set_list, *args))
-
             set_value.trace_add("write", lambda *args: _on_set_change_sources(*args))
-
-            draft_groups = constants.LIMITED_GROUPS_LIST
-            group_value = tkinter.StringVar(self.root)
-            group_entry = OptionMenu(popup, group_value, draft_groups[0], *draft_groups)
-            menu = self.root.nametowidget(group_entry['menu'])
-            menu.config(font=self.fonts_dict["All.TMenubutton"])
 
             progress = Progressbar(
                 popup, orient=tkinter.HORIZONTAL, length=100, mode='determinate')
 
             add_button = Button(popup, command=lambda: self.__add_set(popup,
                                                                       set_value,
-                                                                      event_value,
                                                                       start_entry,
                                                                       end_entry,
-                                                                      group_value,
                                                                       add_button,
                                                                       progress,
                                                                       list_box,
@@ -1986,12 +1941,10 @@ class Overlay(ScaledWindow):
                                                                       status_text,
                                                                       constants.DATA_SET_VERSION_3), text="DOWNLOAD")
 
-            event_separator = Separator(popup, orient='vertical')
             set_separator = Separator(popup, orient='vertical')
-            group_separator = Separator(popup, orient='vertical')
 
             # --- Additional Sources UI ---
-            sources_frame = tkinter.LabelFrame(popup, text="Additional Data Sources (for merging)")
+            sources_frame = tkinter.LabelFrame(popup, text="Data Sources")
             sources_listbox = tkinter.Listbox(sources_frame, height=3, selectmode=tkinter.SINGLE)
             sources_listbox.pack(side=tkinter.LEFT, fill=tkinter.BOTH, expand=True, padx=2, pady=2)
 
@@ -2007,14 +1960,12 @@ class Overlay(ScaledWindow):
             def _refresh_sources_list():
                 sources_listbox.delete(0, tkinter.END)
                 code = _get_current_set_code()
-                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
-                for idx, src in enumerate(sources):
-                    if idx == 0:
-                        continue  # First source comes from the main UI controls
+                sources = self.configuration.settings.set_sources.get(code, [])
+                for src in sources:
                     label = f"{src.format} | {src.user_group} | w={src.weight}"
-                    if src.start_date or src.end_date:
-                        label += f" | {src.start_date or '...'} to {src.end_date or '...'}"
                     sources_listbox.insert(tkinter.END, label)
+                active = [s for s in sources if s.weight > 0]
+                add_button['state'] = 'normal' if active else 'disabled'
 
             def _add_source():
                 code = _get_current_set_code()
@@ -2024,15 +1975,15 @@ class Overlay(ScaledWindow):
                 sel = sources_listbox.curselection()
                 if sel:
                     code = _get_current_set_code()
-                    source_idx = sel[0] + 1  # +1 because index 0 is the primary source
+                    source_idx = sel[0]
                     self._open_source_editor(popup, code, source_idx, _refresh_sources_list)
 
             def _remove_source():
                 sel = sources_listbox.curselection()
                 if sel:
                     code = _get_current_set_code()
-                    source_idx = sel[0] + 1
-                    sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                    source_idx = sel[0]
+                    sources = self.configuration.settings.set_sources.get(code, [])
                     if source_idx < len(sources):
                         sources.pop(source_idx)
                         self.configuration.settings.set_sources[code] = sources
@@ -2041,17 +1992,11 @@ class Overlay(ScaledWindow):
 
             def _on_set_change_sources(*args):
                 code = _get_current_set_code()
-                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
-                # Populate main UI controls from primary source
-                primary = sources[0]
-                event_value.set(primary.format)
-                group_value.set(primary.user_group)
-                if primary.start_date:
-                    start_entry.delete(0, tkinter.END)
-                    start_entry.insert(0, primary.start_date)
-                if primary.end_date:
-                    end_entry.delete(0, tkinter.END)
-                    end_entry.insert(0, primary.end_date)
+                sources = self.configuration.settings.set_sources.get(code, [])
+                if not sources:
+                    default_source = DatasetSource()
+                    self.configuration.settings.set_sources[code] = [default_source]
+                    write_configuration(self.configuration)
                 _refresh_sources_list()
 
             add_src_btn = tkinter.Button(sources_btn_frame, text="Add", command=_add_source)
@@ -2063,33 +2008,27 @@ class Overlay(ScaledWindow):
 
             _refresh_sources_list()
 
-            notice_label.grid(row=0, column=0, columnspan=13, sticky='nsew')
-            list_box_frame.grid(row=1, column=0, columnspan=13, sticky='nsew')
+            notice_label.grid(row=0, column=0, columnspan=7, sticky='nsew')
+            list_box_frame.grid(row=1, column=0, columnspan=7, sticky='nsew')
 
             set_label.grid(row=2, column=0, sticky='nsew')
             set_entry.grid(row=2, column=1, sticky='nsew')
             set_separator.grid(row=2, column=2, sticky='nsew')
-            event_label.grid(row=2, column=3, sticky='nsew')
-            event_entry.grid(row=2, column=4, sticky='nsew')
-            event_separator.grid(row=2, column=5, sticky='nsew')
-            group_label.grid(row=2, column=6, sticky='nsew')
-            group_entry.grid(row=2, column=7, sticky='nsew')
-            group_separator.grid(row=2, column=8, sticky='nsew')
-            start_label.grid(row=2, column=9, sticky='nsew')
-            start_entry.grid(row=2, column=10, sticky='nsew')
-            end_label.grid(row=2, column=11, sticky='nsew')
-            end_entry.grid(row=2, column=12, sticky='nsew')
+            start_label.grid(row=2, column=3, sticky='nsew')
+            start_entry.grid(row=2, column=4, sticky='nsew')
+            end_label.grid(row=2, column=5, sticky='nsew')
+            end_entry.grid(row=2, column=6, sticky='nsew')
 
-            sources_frame.grid(row=3, column=0, columnspan=13, sticky='nsew', padx=5, pady=2)
-            add_button.grid(row=4, column=0, columnspan=13, sticky='nsew')
-            progress.grid(row=5, column=0, columnspan=13, sticky='nsew')
-            status_label.grid(row=6, column=0, columnspan=13, sticky='nsew')
+            sources_frame.grid(row=3, column=0, columnspan=7, sticky='nsew', padx=5, pady=2)
+            add_button.grid(row=4, column=0, columnspan=7, sticky='nsew')
+            progress.grid(row=5, column=0, columnspan=7, sticky='nsew')
+            status_label.grid(row=6, column=0, columnspan=7, sticky='nsew')
 
             list_box.pack(expand=True, fill="both")
 
             self.__update_set_table(list_box, sets)
             self.__update_set_start_date(start_entry, set_value, sets)
-            self.__update_event_format(event_entry, event_value, set_value, sets)
+            _on_set_change_sources()
             status_text.set("")
             popup.update()
 
@@ -3015,7 +2954,7 @@ class Overlay(ScaledWindow):
         except Exception as error:
             logger.error(error)
 
-    def __add_set(self, popup, draft_set, draft, start, end, user_group, button, progress, list_box, sets, status, version):
+    def __add_set(self, popup, draft_set, start, end, button, progress, list_box, sets, status, version):
         '''Initiates the set download process when the Download Dataset button is clicked'''
         result = True
         result_string = ""
@@ -3044,8 +2983,20 @@ class Overlay(ScaledWindow):
                 button['state'] = 'disabled'
                 progress['value'] = 0
                 popup.update()
+
+                set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
+                per_set_sources = self.configuration.settings.set_sources.get(set_code, [])
+                active_sources = [s for s in per_set_sources if s.weight > 0]
+
+                if not active_sources:
+                    result = False
+                    result_string = "No active data sources configured for this set"
+                    break
+
+                # Use the first active source for initial setup (color ratings, up-to-date check)
+                first_source = active_sources[0]
                 self.extractor.select_sets(sets[draft_set.get()])
-                self.extractor.set_draft_type(draft.get())
+                self.extractor.set_draft_type(first_source.format)
                 if not self.extractor.set_start_date(start.get()):
                     result = False
                     result_string = "Invalid Start Date (YYYY-MM-DD)"
@@ -3054,19 +3005,17 @@ class Overlay(ScaledWindow):
                     result = False
                     result_string = "Invalid End Date (YYYY-MM-DD)"
                     break
-                self.extractor.set_user_group(user_group.get())
+                self.extractor.set_user_group(first_source.user_group)
                 self.extractor.set_version(version)
-                
+
                 set_codes = [v.seventeenlands[0] for v in sets.values()]
                 file_list, error_list = retrieve_local_set_list(set_codes)
-                
+
                 # Log all of errors generated by retrieve_local_set_list
                 for error_string in error_list:
                     logger.error(error_string)
 
                 self.last_download = current_time
-
-                set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
 
                 status.set("Downloading Color Ratings")
                 result, game_count = self.extractor.retrieve_17lands_color_ratings()
@@ -3075,7 +3024,7 @@ class Overlay(ScaledWindow):
                     if game_count == 0:
                         message_box = tkinter.messagebox.askyesno(
                                          title="Download",
-                                         message=f"17Lands doesn't currently have card statistics for {draft_set.get()} {draft.get()} {start.get()} to {end.get()}.\n\n"
+                                         message=f"17Lands doesn't currently have card statistics for {draft_set.get()} {start.get()} to {end.get()}.\n\n"
                                          "If you plan to use a tier list, you will still need to download this dataset so this application can read the Arena log.\n\n"
                                          "Would you like to continue with the download?"
                                       )
@@ -3097,8 +3046,6 @@ class Overlay(ScaledWindow):
                                     break
                             elif(
                                 set_code == file[0] and
-                                draft.get() == file[1] and
-                                user_group.get() == file[2] and
                                 start.get() == file[3] and
                                 (end.get() == file[4] or end.get() > file[4]) and
                                 game_count == file[5]
@@ -3118,49 +3065,29 @@ class Overlay(ScaledWindow):
                                 status.set("Download Cancelled")
                                 break
 
-                # Sync main UI controls to per-set primary source config
-                primary_source = DatasetSource(
-                    format=draft.get(),
-                    user_group=user_group.get(),
-                    start_date=start.get(),
-                    end_date=end.get(),
-                    weight=1.0,
-                )
-                per_set_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
-                per_set_sources[0] = primary_source
-                self.configuration.settings.set_sources[set_code] = per_set_sources
-
+                # Download first source
+                status.set(f"Downloading Source 1/{len(active_sources)}")
+                popup.update()
                 result, result_string, temp_size = self.extractor.download_card_data(
                     popup, progress, status, self.configuration.card_data.database_size)
 
                 if not result:
                     break
 
-                # Multi-source merge: download additional sources and merge
-                additional_sources = [
-                    s for s in per_set_sources
-                    if s.weight > 0
-                ]
-                if len(additional_sources) > 1:
-                    primary_data = copy.deepcopy(self.extractor.combined_data)
-                    all_datasets = [primary_data]
-                    all_weights = [additional_sources[0].weight]
+                # Download remaining sources and merge
+                if len(active_sources) > 1:
+                    all_datasets = [copy.deepcopy(self.extractor.combined_data)]
+                    all_weights = [active_sources[0].weight]
 
-                    for idx, source in enumerate(additional_sources[1:], start=2):
-                        status.set(f"Downloading Source {idx}/{len(additional_sources)}")
+                    for idx, source in enumerate(active_sources[1:], start=2):
+                        status.set(f"Downloading Source {idx}/{len(active_sources)}")
                         popup.update()
 
                         self.extractor.clear_data()
                         self.extractor.select_sets(sets[draft_set.get()])
                         self.extractor.set_draft_type(source.format)
-                        if source.start_date:
-                            self.extractor.set_start_date(source.start_date)
-                        else:
-                            self.extractor.set_start_date(start.get())
-                        if source.end_date:
-                            self.extractor.set_end_date(source.end_date)
-                        else:
-                            self.extractor.set_end_date(end.get())
+                        self.extractor.set_start_date(start.get())
+                        self.extractor.set_end_date(end.get())
                         self.extractor.set_user_group(source.user_group)
                         self.extractor.set_version(version)
 
@@ -3172,7 +3099,7 @@ class Overlay(ScaledWindow):
                             all_datasets.append(copy.deepcopy(self.extractor.combined_data))
                             all_weights.append(source.weight)
                         else:
-                            logger.error("Additional source %d failed: %s", idx, src_string)
+                            logger.error("Source %d failed: %s", idx, src_string)
 
                     if len(all_datasets) > 1:
                         status.set("Merging Datasets")
@@ -3219,7 +3146,7 @@ class Overlay(ScaledWindow):
     def _open_source_editor(self, parent, set_code, source_idx, on_save_callback):
         """Open a small dialog to add or edit a DatasetSource."""
         editing = source_idx is not None
-        sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+        sources = self.configuration.settings.set_sources.get(set_code, [])
         if editing:
             source = sources[source_idx]
         else:
@@ -3243,18 +3170,6 @@ class Overlay(ScaledWindow):
         group_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
 
         row += 1
-        tkinter.Label(dialog, text="Start Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
-        start_entry = tkinter.Entry(dialog)
-        start_entry.insert(0, source.start_date)
-        start_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
-
-        row += 1
-        tkinter.Label(dialog, text="End Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
-        end_entry = tkinter.Entry(dialog)
-        end_entry.insert(0, source.end_date)
-        end_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
-
-        row += 1
         tkinter.Label(dialog, text="Weight:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
         weight_entry = tkinter.Entry(dialog)
         weight_entry.insert(0, str(source.weight))
@@ -3270,11 +3185,9 @@ class Overlay(ScaledWindow):
             new_source = DatasetSource(
                 format=format_var.get(),
                 user_group=group_var.get(),
-                start_date=start_entry.get().strip(),
-                end_date=end_entry.get().strip(),
                 weight=weight,
             )
-            current_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+            current_sources = self.configuration.settings.set_sources.get(set_code, [])
             if editing:
                 current_sources[source_idx] = new_source
             else:
