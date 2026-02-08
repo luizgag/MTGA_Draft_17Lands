@@ -13,10 +13,11 @@ SCREENSHOT_PREFIX = "p1p1_screenshot_"
 
 MOCKED_SET_CODES = ["MH3","OTJ"]
 MOCKED_DATASETS = [
-    "MH3_PremierDraft_Data.json",
+    "MH3_Data.json",
     "MH3_PremierDraft_All_Data.json",
     "MH3_PremierDraft_Side_Data.json",
     "MH3_PremierDraft_Top_Data.json",
+    "OTJ_Data.json",
     "OTJ_TradDraft_Middle_Data.json",
     "OTJ_PremierDraft_All.json",
     "OTJ_PremierDraft_All_Data.txt",
@@ -24,8 +25,10 @@ MOCKED_DATASETS = [
     "OTJ_FakeDraft_All_Data.json",
 ]
 MOCKED_DATASETS_LIST_VALID = [
+    ("MH3", "", "", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_Data.json")),
     ("MH3", "PremierDraft", "All", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_PremierDraft_All_Data.json")),
     ("MH3", "PremierDraft", "Top", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_PremierDraft_Top_Data.json")),
+    ("OTJ", "", "", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_Data.json")),
     ("OTJ", "TradDraft", "Middle", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_TradDraft_Middle_Data.json")),
     ("OTJ", "QuickDraft", "Bottom", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_QuickDraft_Bottom_Data.json"))
 ]

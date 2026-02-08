@@ -3,26 +3,29 @@ import tkinter
 from tkinter.ttk import Progressbar, Treeview, Style, OptionMenu, Button, Checkbutton, Label, Separator, Entry
 from tkinter import filedialog, messagebox, font
 from datetime import date, datetime, UTC
+import copy
 import urllib
 import sys
 import io
 import math
 import argparse
 import webbrowser
+import os
 from os import stat, path
 from pynput.keyboard import Listener, KeyCode
 from PIL import Image, ImageTk, ImageFont
-from src.configuration import read_configuration, write_configuration, reset_configuration
+from src.configuration import read_configuration, write_configuration, reset_configuration, DatasetSource
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
-from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory
-from src.utils import retrieve_local_set_list, open_file, clean_string
+from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets, delete_old_set_files
+from src.utils import retrieve_local_set_list, open_file, clean_string, AutocompleteEntry
 from src import constants
 from src.logger import create_logger
 from src.app_update import AppUpdate
 from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.tier_list import TierWindow, TierList
+from src.archetype_openness import OpennessTracker, load_archetype_config
 from src.card_logic import (
     CardResult,
     copy_deck,
@@ -177,87 +180,6 @@ def toggle_widget(input_widget, enable):
 def url_callback(event):
     webbrowser.open_new(event.widget.cget("text"))
 
-class AutocompleteEntry(tkinter.Entry):
-    def initialize(self, completion_list):
-        self.completion_list = completion_list
-        self.hitsIndex = -1
-        self.hits = []
-        self.autocompleted = False
-        self.current = ""
-        self.bind('<KeyRelease>', self.act_on_release)
-        self.bind('<KeyPress>', self.act_on_press)
-
-    def autocomplete(self):
-        self.current = self.get().lower()
-        self.hits = [item for item in self.completion_list if item.lower().startswith(self.current)]
-        if self.hits:
-            self.hitsIndex = 0  # Start with the first hit
-            self.display_autocompletion()
-        else:
-            self.hitsIndex = -1
-            self.remove_autocompletion()
-
-    def remove_autocompletion(self):
-        self.autocompleted = False
-
-    def display_autocompletion(self):
-        if self.hitsIndex == -1:
-            self.remove_autocompletion()  # Don't display anything if hitsIndex is -1
-            return
-        if self.hits:
-            cursor = self.index(tkinter.INSERT)
-            self.delete(0, tkinter.END)
-            self.insert(0, self.hits[self.hitsIndex])
-            self.select_range(cursor, tkinter.END)
-            self.icursor(cursor)
-            self.autocompleted = True
-        else:
-            self.autocompleted = False
-
-    def act_on_release(self, event):
-        if event.keysym in ('BackSpace', 'Delete'):
-            self.autocompleted = False
-            return
-
-        if event.keysym not in ('Down', 'Up', 'Tab', 'Right', 'Left'):
-            self.autocomplete()
-
-    def act_on_press(self, event):
-        if event.keysym == 'Left':
-            if self.autocompleted:
-                self.remove_autocompletion()
-                return "break"
-
-        if event.keysym in ('Down', 'Up', 'Tab'):
-            if self.select_present():
-                cursor = self.index(tkinter.SEL_FIRST)
-                if self.hits and self.current == self.get().lower()[0:cursor]:
-                    if event.keysym == 'Up':
-                        self.hitsIndex = (self.hitsIndex - 1) % len(self.hits)
-                    else:
-                        self.hitsIndex = (self.hitsIndex + 1) % len(self.hits)
-                    self.display_autocompletion()
-            else:
-                self.autocomplete()
-            return "break"
-
-        if event.keysym == 'Right':
-            if self.select_present():
-                self.selection_clear()
-                self.icursor(tkinter.END)
-                return "break"
-
-        if event.keysym in ('BackSpace', 'Delete'):
-            if self.autocompleted:
-                self.remove_autocompletion()
-
-    def select_present(self):
-        try:
-            self.index(tkinter.SEL_FIRST)
-            return True
-        except tkinter.TclError:
-            return False
-
 class Overlay(ScaledWindow):
     '''Class that handles all of the UI widgets'''
 
@@ -266,13 +188,16 @@ class Overlay(ScaledWindow):
         self.root = tkinter.Tk()
         self.root.title(f"Version {APPLICATION_VERSION:2.2f}")
         self.configuration, _ = read_configuration()
-        self.root.resizable(False, False)
+        self.root.resizable(True, False)
         self.last_download = 0
 
         self.__set_os_configuration()
 
         self.table_width = self._scale_value(
             self.configuration.settings.table_width)
+        self.root.minsize(width=self._scale_value(constants.MIN_TABLE_WIDTH), height=0)
+        self._resize_debounce_id = None
+        self._last_processed_width = None
 
         self.listener = None
         self.configuration.settings.arena_log_location = search_arena_log_locations(
@@ -328,6 +253,8 @@ class Overlay(ScaledWindow):
             label="Suggest Decks", command=self.__open_suggest_deck_window)
         self.cardmenu.add_command(
             label="Compare Cards", command=self.__open_card_compare_window)
+        self.cardmenu.add_command(
+            label="Archetype Editor", command=self.__open_archetype_editor)
 
         self.settingsmenu = tkinter.Menu(self.menubar, tearoff=0)
         self.settingsmenu.add_command(
@@ -384,6 +311,7 @@ class Overlay(ScaledWindow):
         self.data_source_checkbox_value = tkinter.IntVar(self.root)
         self.deck_filter_checkbox_value = tkinter.IntVar(self.root)
         self.refresh_button_checkbox_value = tkinter.IntVar(self.root)
+        self.openness_checkbox_value = tkinter.IntVar(self.root)
         self.best_in_column_threshold_value = tkinter.DoubleVar(self.root)
         self.platform_selection = tkinter.StringVar(self.root)
         self.mtgo_log_folder_value = tkinter.StringVar(self.root)
@@ -469,6 +397,11 @@ class Overlay(ScaledWindow):
         self.pack_table = self._create_header("pack_table", self.pack_table_frame, 0, self.fonts_dict["All.TableRow"], headers,
                                               self.table_width, True, True, constants.TABLE_STYLE, False)
 
+        # Openness panel (below pack table, hidden until archetypes loaded)
+        self.openness_tracker = None
+        self.openness_frame = tkinter.LabelFrame(self.root, text="Archetype Openness")
+        self._openness_tooltip = None
+
         self.missing_frame = tkinter.Frame(self.root)
         self.missing_cards_label = Label(
             self.missing_frame, text="Missing Cards", style="MainSectionsBold.TLabel")
@@ -532,12 +465,16 @@ class Overlay(ScaledWindow):
             row=8, column=0, columnspan=2, sticky='nsew')
 
         self.status_frame.grid(row=9, column=0, columnspan=2, sticky='nsew')
-        self.pack_table_frame.grid(row=10, column=0, columnspan=2)
-        self.missing_frame.grid(row=11, column=0, columnspan=2, sticky='nsew')
-        self.missing_table_frame.grid(row=12, column=0, columnspan=2)
-        self.stat_frame.grid(row=13, column=0, columnspan=2, sticky='nsew')
-        self.stat_table.grid(row=14, column=0, columnspan=2, sticky='nsew')
-        footnote_label.grid(row=15, column=0, columnspan=2)
+        self.pack_table_frame.grid(row=10, column=0, columnspan=2, sticky='ew')
+        self.openness_frame.grid(row=11, column=0, columnspan=2, sticky='ew')
+        self.openness_frame.grid_remove()  # Hidden until archetypes loaded
+        self.missing_frame.grid(row=12, column=0, columnspan=2, sticky='nsew')
+        self.missing_table_frame.grid(row=13, column=0, columnspan=2, sticky='ew')
+        self.stat_frame.grid(row=14, column=0, columnspan=2, sticky='nsew')
+        self.stat_table.grid(row=15, column=0, columnspan=2, sticky='nsew')
+        footnote_label.grid(row=16, column=0, columnspan=2)
+
+        self.root.bind("<Configure>", self.__on_window_resize)
 
         self.refresh_button.pack(expand=True, fill="both")
 
@@ -583,7 +520,56 @@ class Overlay(ScaledWindow):
         if self.log_check_id is not None:
             self.root.after_cancel(self.log_check_id)
             self.log_check_id = None
+        if self._resize_debounce_id is not None:
+            self.root.after_cancel(self._resize_debounce_id)
+            self.__save_table_width()
         self.root.destroy()
+
+    def __on_window_resize(self, event):
+        """Handle window horizontal resize — update table column widths proportionally"""
+        if event.widget != self.root:
+            return
+
+        new_width = event.width
+        if new_width <= 1 or new_width == self._last_processed_width:
+            return
+
+        self._last_processed_width = new_width
+        self.table_width = new_width
+        self.__resize_all_tables()
+
+        # Debounced config save
+        if self._resize_debounce_id is not None:
+            self.root.after_cancel(self._resize_debounce_id)
+        self._resize_debounce_id = self.root.after(500, self.__save_table_width)
+
+    def __resize_all_tables(self):
+        """Resize all main table columns proportionally to the current table_width"""
+        for table in (self.pack_table, self.missing_table):
+            displayed = table["displaycolumns"]
+            if not displayed or displayed == ('#all',):
+                continue
+            displayed = list(displayed)
+            n = len(displayed)
+            if n <= len(constants.TABLE_PROPORTIONS):
+                proportions = constants.TABLE_PROPORTIONS[n - 1]
+            else:
+                rest = (1.0 - 0.46) / (n - 1)
+                proportions = (0.46,) + (rest,) * (n - 1)
+            for col, prop in zip(displayed, proportions):
+                col_width = int(math.ceil(prop * self.table_width))
+                table.column(col, width=col_width)
+
+        for col, config in constants.STATS_HEADER_CONFIG.items():
+            col_width = int(math.ceil(config["width"] * self.table_width))
+            self.stat_table.column(col, width=col_width)
+
+    def __save_table_width(self):
+        """Persist the current table width to config.json (unscaled)"""
+        self._resize_debounce_id = None
+        unscaled_width = int(self.table_width / self.scale_factor)
+        self.configuration.settings.table_width = unscaled_width
+        write_configuration(self.configuration)
 
     def lift_window(self):
         '''Function that's used to minimize a window or set it as the top most window'''
@@ -1348,6 +1334,21 @@ class Overlay(ScaledWindow):
                         mean,
                         std)
 
+            # Initialize openness tracker
+            if self.configuration.features.archetype_openness_enabled:
+                set_code = self.draft.draft_sets[0] if self.draft.draft_sets else ""
+                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
+                archetype_config = load_archetype_config(config_path)
+                if archetype_config:
+                    self.openness_tracker = OpennessTracker(archetype_config)
+                    self.openness_frame.grid()
+                else:
+                    self.openness_tracker = None
+                    self.openness_frame.grid_remove()
+            else:
+                self.openness_tracker = None
+                self.openness_frame.grid_remove()
+
         use_ocr = source == Source.REFRESH and self.configuration.settings.p1p1_ocr_enabled
         if self.draft.draft_data_search(use_ocr, self.configuration.settings.save_screenshot_enabled):
             update = True
@@ -1426,6 +1427,8 @@ class Overlay(ScaledWindow):
                 self.deck_filter_checkbox_value.get())
             self.configuration.settings.refresh_button_enabled = bool(
                 self.refresh_button_checkbox_value.get())
+            self.configuration.features.archetype_openness_enabled = bool(
+                self.openness_checkbox_value.get())
             self.configuration.settings.best_in_column_threshold = float(
                 self.best_in_column_threshold_value.get())
             self.configuration.settings.platform = self.platform_selection.get()
@@ -1515,6 +1518,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.deck_filter_enabled)
             self.refresh_button_checkbox_value.set(
                 self.configuration.settings.refresh_button_enabled)
+            self.openness_checkbox_value.set(
+                self.configuration.features.archetype_openness_enabled)
             self.best_in_column_threshold_value.set(
                 self.configuration.settings.best_in_column_threshold)
             self.platform_selection.set(
@@ -1599,6 +1604,12 @@ class Overlay(ScaledWindow):
                                  filtered,
                                  fields)
 
+        # Update openness scoring
+        if self.openness_tracker and pack_cards:
+            pick_in_pack = self.draft.retrieve_current_pick_in_pack()
+            self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
+            self.__update_openness_panel()
+
         self.__update_missing_table(missing_cards,
                                     picked_cards,
                                     filtered,
@@ -1617,6 +1628,165 @@ class Overlay(ScaledWindow):
         self.root.update_idletasks()
         self.__update_deck_stats_table(self.draft.retrieve_taken_cards(
         ), self.stat_options_selection.get(), self.pack_table.winfo_width())
+
+    def __update_openness_panel(self):
+        """Update the archetype openness panel with current scores."""
+        if not self.openness_tracker:
+            return
+
+        # Clear existing labels
+        for widget in self.openness_frame.winfo_children():
+            widget.destroy()
+
+        scores = self.openness_tracker.get_scores()
+        sorted_archetypes = sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
+        scoring_method = self.openness_tracker.scoring_method
+
+        # Opacity map for confidence levels
+        opacity_map = {"none": 0.4, "low": 0.6, "medium": 0.8, "high": 1.0}
+
+        if scoring_method == "bayesian_beta":
+            max_score = 1.0  # P(open) is always 0-1
+        else:
+            max_score = max(abs(s["score"]) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
+            if max_score == 0:
+                max_score = 1.0
+
+        for i, (name, data) in enumerate(sorted_archetypes):
+            score = data["score"]
+            confidence = data.get("confidence", "high")
+            opacity = opacity_map.get(confidence, 1.0)
+
+            # Compute foreground color with opacity
+            fg_color = self._openness_fg_with_opacity(opacity)
+
+            name_label = tkinter.Label(
+                self.openness_frame,
+                text=name,
+                anchor=tkinter.W,
+                width=15,
+                fg=fg_color,
+            )
+            name_label.grid(row=i, column=0, sticky="w", padx=(4, 2))
+
+            # Format score based on method
+            if scoring_method == "bayesian_beta":
+                score_text = f"{score * 100:.0f}%"
+            else:
+                score_text = f"{score:+.1f}"
+
+            score_label = tkinter.Label(
+                self.openness_frame,
+                text=score_text,
+                anchor=tkinter.E,
+                width=6,
+                fg=fg_color,
+            )
+            score_label.grid(row=i, column=1, padx=2)
+
+            # Visual bar
+            if scoring_method == "bayesian_beta":
+                bar_width = int(score * 80)
+                bar_color = self._openness_bayesian_bar_color(score)
+            else:
+                bar_width = int(abs(score) / max_score * 80) if max_score else 0
+                bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
+
+            bar_canvas = tkinter.Canvas(
+                self.openness_frame, width=80, height=12, highlightthickness=0
+            )
+            bar_canvas.create_rectangle(0, 0, bar_width, 12, fill=bar_color, outline="")
+            bar_canvas.grid(row=i, column=2, padx=(2, 4))
+
+            # Tooltip binding for top contributors
+            self.__bind_openness_tooltip(name_label, name)
+            self.__bind_openness_tooltip(score_label, name)
+            self.__bind_openness_tooltip(bar_canvas, name)
+
+    @staticmethod
+    def _openness_fg_with_opacity(opacity: float) -> str:
+        """Compute a foreground color with the given opacity (0-1) against a dark background.
+
+        Blends white toward dark background. opacity=1.0 -> white, opacity=0.4 -> dim gray.
+        """
+        bg = 30  # dark background ~#1e1e1e
+        fg = 255  # white text
+        blended = int(bg + (fg - bg) * opacity)
+        return f"#{blended:02x}{blended:02x}{blended:02x}"
+
+    @staticmethod
+    def _openness_bayesian_bar_color(p_open: float) -> str:
+        """Color for Bayesian bar: green > 0.5, red < 0.5, gray at 0.5."""
+        if p_open > 0.55:
+            return "#4CAF50"
+        elif p_open < 0.45:
+            return "#F44336"
+        else:
+            return "#888888"
+
+    def __bind_openness_tooltip(self, widget, archetype_name):
+        """Bind hover tooltip showing top contributing cards for an archetype."""
+        def on_enter(event):
+            if not self.openness_tracker:
+                return
+            contributors = self.openness_tracker.get_top_contributors(archetype_name, count=3)
+            if not contributors:
+                return
+            lines = []
+            for c in contributors:
+                lines.append(f"{c['card_name']}: pick {c['pick_number']}, ATA {c['ata']:.1f} -> {c['signal']:+.1f}")
+            tooltip_text = "\n".join(lines)
+            self.__show_openness_tooltip(event, tooltip_text)
+
+        def on_leave(event):
+            self.__hide_openness_tooltip()
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
+    def __show_openness_tooltip(self, event, text):
+        """Show a simple tooltip near the cursor."""
+        self._openness_tooltip = tkinter.Toplevel()
+        self._openness_tooltip.wm_overrideredirect(True)
+        self._openness_tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+        label = tkinter.Label(
+            self._openness_tooltip, text=text, background="#333333",
+            foreground="#ffffff", relief="solid", borderwidth=1,
+            justify=tkinter.LEFT, padx=4, pady=2,
+        )
+        label.pack()
+
+    def __hide_openness_tooltip(self):
+        """Hide the openness tooltip."""
+        if self._openness_tooltip:
+            self._openness_tooltip.destroy()
+            self._openness_tooltip = None
+
+    def __open_archetype_editor(self):
+        """Open the Archetype Editor window."""
+        set_code = ""
+        if self.draft.draft_sets:
+            set_code = self.draft.draft_sets[0]
+        if not set_code:
+            messagebox.showinfo("Info", "Start a draft first to configure archetypes for the current set.")
+            return
+
+        def on_save():
+            """Reload archetype config after save."""
+            if self.configuration.features.archetype_openness_enabled:
+                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
+                archetype_config = load_archetype_config(config_path)
+                if archetype_config:
+                    self.openness_tracker = OpennessTracker(archetype_config)
+
+        from src.archetype_editor import ArchetypeEditor
+        ArchetypeEditor(
+            self.scale_factor,
+            self.fonts_dict,
+            self.draft.set_data,
+            set_code,
+            on_save_callback=on_save,
+        )
 
     def __arena_log_check(self):
         '''Function that monitors the Arena/MTGO log every 1000ms to determine if there's new draft data'''
@@ -1792,6 +1962,8 @@ class Overlay(ScaledWindow):
             set_value.trace_add("write", lambda *args, event_widget=event_entry, event_selection=event_value, set_selection=set_value,
                             set_list=sets: self.__update_event_format(event_widget, event_selection, set_selection, set_list, *args))
 
+            set_value.trace_add("write", lambda *args: _on_set_change_sources(*args))
+
             draft_groups = constants.LIMITED_GROUPS_LIST
             group_value = tkinter.StringVar(self.root)
             group_entry = OptionMenu(popup, group_value, draft_groups[0], *draft_groups)
@@ -1818,12 +1990,82 @@ class Overlay(ScaledWindow):
             set_separator = Separator(popup, orient='vertical')
             group_separator = Separator(popup, orient='vertical')
 
+            # --- Additional Sources UI ---
+            sources_frame = tkinter.LabelFrame(popup, text="Additional Data Sources (for merging)")
+            sources_listbox = tkinter.Listbox(sources_frame, height=3, selectmode=tkinter.SINGLE)
+            sources_listbox.pack(side=tkinter.LEFT, fill=tkinter.BOTH, expand=True, padx=2, pady=2)
+
+            sources_btn_frame = tkinter.Frame(sources_frame)
+            sources_btn_frame.pack(side=tkinter.RIGHT, fill=tkinter.Y, padx=2, pady=2)
+
+            def _get_current_set_code():
+                selected = set_value.get()
+                if selected and selected in sets:
+                    return clean_string(sets[selected].seventeenlands[0])
+                return ""
+
+            def _refresh_sources_list():
+                sources_listbox.delete(0, tkinter.END)
+                code = _get_current_set_code()
+                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                for idx, src in enumerate(sources):
+                    if idx == 0:
+                        continue  # First source comes from the main UI controls
+                    label = f"{src.format} | {src.user_group} | w={src.weight}"
+                    if src.start_date or src.end_date:
+                        label += f" | {src.start_date or '...'} to {src.end_date or '...'}"
+                    sources_listbox.insert(tkinter.END, label)
+
+            def _add_source():
+                code = _get_current_set_code()
+                self._open_source_editor(popup, code, None, _refresh_sources_list)
+
+            def _edit_source():
+                sel = sources_listbox.curselection()
+                if sel:
+                    code = _get_current_set_code()
+                    source_idx = sel[0] + 1  # +1 because index 0 is the primary source
+                    self._open_source_editor(popup, code, source_idx, _refresh_sources_list)
+
+            def _remove_source():
+                sel = sources_listbox.curselection()
+                if sel:
+                    code = _get_current_set_code()
+                    source_idx = sel[0] + 1
+                    sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                    if source_idx < len(sources):
+                        sources.pop(source_idx)
+                        self.configuration.settings.set_sources[code] = sources
+                        write_configuration(self.configuration)
+                        _refresh_sources_list()
+
+            def _on_set_change_sources(*args):
+                code = _get_current_set_code()
+                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                # Populate main UI controls from primary source
+                primary = sources[0]
+                event_value.set(primary.format)
+                group_value.set(primary.user_group)
+                if primary.start_date:
+                    start_entry.delete(0, tkinter.END)
+                    start_entry.insert(0, primary.start_date)
+                if primary.end_date:
+                    end_entry.delete(0, tkinter.END)
+                    end_entry.insert(0, primary.end_date)
+                _refresh_sources_list()
+
+            add_src_btn = tkinter.Button(sources_btn_frame, text="Add", command=_add_source)
+            add_src_btn.pack(fill=tkinter.X, pady=1)
+            edit_src_btn = tkinter.Button(sources_btn_frame, text="Edit", command=_edit_source)
+            edit_src_btn.pack(fill=tkinter.X, pady=1)
+            remove_src_btn = tkinter.Button(sources_btn_frame, text="Remove", command=_remove_source)
+            remove_src_btn.pack(fill=tkinter.X, pady=1)
+
+            _refresh_sources_list()
+
             notice_label.grid(row=0, column=0, columnspan=13, sticky='nsew')
             list_box_frame.grid(row=1, column=0, columnspan=13, sticky='nsew')
-            add_button.grid(row=3, column=0, columnspan=13, sticky='nsew')
-            progress.grid(row=4, column=0, columnspan=13, sticky='nsew')
-            status_label.grid(row=5, column=0, columnspan=13, sticky='nsew')
-            
+
             set_label.grid(row=2, column=0, sticky='nsew')
             set_entry.grid(row=2, column=1, sticky='nsew')
             set_separator.grid(row=2, column=2, sticky='nsew')
@@ -1837,6 +2079,11 @@ class Overlay(ScaledWindow):
             start_entry.grid(row=2, column=10, sticky='nsew')
             end_label.grid(row=2, column=11, sticky='nsew')
             end_entry.grid(row=2, column=12, sticky='nsew')
+
+            sources_frame.grid(row=3, column=0, columnspan=13, sticky='nsew', padx=5, pady=2)
+            add_button.grid(row=4, column=0, columnspan=13, sticky='nsew')
+            progress.grid(row=5, column=0, columnspan=13, sticky='nsew')
+            status_label.grid(row=6, column=0, columnspan=13, sticky='nsew')
 
             list_box.pack(expand=True, fill="both")
 
@@ -2344,6 +2591,13 @@ class Overlay(ScaledWindow):
                                              onvalue=1,
                                              offvalue=0)
 
+            openness_label = Label(
+                popup, text="Enable Deck Openness:", style="MainSectionsBold.TLabel", anchor="e")
+            openness_checkbox = Checkbutton(popup,
+                                             variable=self.openness_checkbox_value,
+                                             onvalue=1,
+                                             offvalue=0)
+
             card_colors_label = Label(
                 popup, text="Enable Row Colors:", style="MainSectionsBold.TLabel", anchor="e")
             card_colors_checkbox = Checkbutton(popup,
@@ -2601,6 +2855,14 @@ class Overlay(ScaledWindow):
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
 
+            openness_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            openness_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
             platform_label = Label(
                 popup, text="Platform:", style="MainSectionsBold.TLabel", anchor="e")
             platform_options = OptionMenu(popup, self.platform_selection, self.platform_selection.get(),
@@ -2765,7 +3027,7 @@ class Overlay(ScaledWindow):
                 if time_difference >= constants.DATASET_DOWNLOAD_RATE_LIMIT_SEC:
                     message_box = tkinter.messagebox.askyesno(
                                     title="Download",
-                                    message=f"Are you sure that you want to download the {draft_set.get()} {draft.get()} dataset?"
+                                    message=f"Are you sure that you want to download the {draft_set.get()} dataset?"
                                  )
                     if not message_box:
                         break
@@ -2804,6 +3066,8 @@ class Overlay(ScaledWindow):
 
                 self.last_download = current_time
 
+                set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
+
                 status.set("Downloading Color Ratings")
                 result, game_count = self.extractor.retrieve_17lands_color_ratings()
 
@@ -2820,9 +3084,18 @@ class Overlay(ScaledWindow):
                             break
                     else:
                         notify = False
-                        set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
                         for file in file_list:
-                            if(
+                            if file[1] == "":
+                                # New merged format: skip event_type/user_group comparison
+                                if(
+                                    set_code == file[0] and
+                                    start.get() == file[3] and
+                                    (end.get() == file[4] or end.get() > file[4]) and
+                                    game_count == file[5]
+                                ):
+                                    notify = True
+                                    break
+                            elif(
                                 set_code == file[0] and
                                 draft.get() == file[1] and
                                 user_group.get() == file[2] and
@@ -2845,16 +3118,74 @@ class Overlay(ScaledWindow):
                                 status.set("Download Cancelled")
                                 break
 
+                # Sync main UI controls to per-set primary source config
+                primary_source = DatasetSource(
+                    format=draft.get(),
+                    user_group=user_group.get(),
+                    start_date=start.get(),
+                    end_date=end.get(),
+                    weight=1.0,
+                )
+                per_set_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+                per_set_sources[0] = primary_source
+                self.configuration.settings.set_sources[set_code] = per_set_sources
+
                 result, result_string, temp_size = self.extractor.download_card_data(
                     popup, progress, status, self.configuration.card_data.database_size)
 
                 if not result:
                     break
 
+                # Multi-source merge: download additional sources and merge
+                additional_sources = [
+                    s for s in per_set_sources
+                    if s.weight > 0
+                ]
+                if len(additional_sources) > 1:
+                    primary_data = copy.deepcopy(self.extractor.combined_data)
+                    all_datasets = [primary_data]
+                    all_weights = [additional_sources[0].weight]
+
+                    for idx, source in enumerate(additional_sources[1:], start=2):
+                        status.set(f"Downloading Source {idx}/{len(additional_sources)}")
+                        popup.update()
+
+                        self.extractor.clear_data()
+                        self.extractor.select_sets(sets[draft_set.get()])
+                        self.extractor.set_draft_type(source.format)
+                        if source.start_date:
+                            self.extractor.set_start_date(source.start_date)
+                        else:
+                            self.extractor.set_start_date(start.get())
+                        if source.end_date:
+                            self.extractor.set_end_date(source.end_date)
+                        else:
+                            self.extractor.set_end_date(end.get())
+                        self.extractor.set_user_group(source.user_group)
+                        self.extractor.set_version(version)
+
+                        self.extractor.retrieve_17lands_color_ratings()
+                        src_result, src_string, _ = self.extractor.download_card_data(
+                            popup, progress, status, self.configuration.card_data.database_size)
+
+                        if src_result:
+                            all_datasets.append(copy.deepcopy(self.extractor.combined_data))
+                            all_weights.append(source.weight)
+                        else:
+                            logger.error("Additional source %d failed: %s", idx, src_string)
+
+                    if len(all_datasets) > 1:
+                        status.set("Merging Datasets")
+                        popup.update()
+                        merged = merge_datasets(all_datasets, all_weights)
+                        self.extractor.combined_data = merged
+
                 if not self.extractor.export_card_data():
                     result = False
                     result_string = "File Write Failure"
                     break
+                # Delete old 4-segment files now that new merged file exists
+                delete_old_set_files(set_code)
                 progress['value'] = 100
                 return_size = temp_size
                 popup.update()
@@ -2885,6 +3216,76 @@ class Overlay(ScaledWindow):
         popup.update()
         return
 
+    def _open_source_editor(self, parent, set_code, source_idx, on_save_callback):
+        """Open a small dialog to add or edit a DatasetSource."""
+        editing = source_idx is not None
+        sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+        if editing:
+            source = sources[source_idx]
+        else:
+            source = DatasetSource()
+
+        dialog = tkinter.Toplevel(parent)
+        dialog.wm_title("Edit Source" if editing else "Add Source")
+        dialog.attributes("-topmost", True)
+        dialog.resizable(width=False, height=False)
+
+        row = 0
+        tkinter.Label(dialog, text="Format:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        format_var = tkinter.StringVar(value=source.format)
+        format_menu = tkinter.OptionMenu(dialog, format_var, *constants.LIMITED_TYPE_LIST)
+        format_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="User Group:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        group_var = tkinter.StringVar(value=source.user_group)
+        group_menu = tkinter.OptionMenu(dialog, group_var, *constants.LIMITED_GROUPS_LIST)
+        group_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="Start Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        start_entry = tkinter.Entry(dialog)
+        start_entry.insert(0, source.start_date)
+        start_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="End Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        end_entry = tkinter.Entry(dialog)
+        end_entry.insert(0, source.end_date)
+        end_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="Weight:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        weight_entry = tkinter.Entry(dialog)
+        weight_entry.insert(0, str(source.weight))
+        weight_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+
+        def _save():
+            try:
+                weight = float(weight_entry.get())
+            except ValueError:
+                weight = 1.0
+            new_source = DatasetSource(
+                format=format_var.get(),
+                user_group=group_var.get(),
+                start_date=start_entry.get().strip(),
+                end_date=end_entry.get().strip(),
+                weight=weight,
+            )
+            current_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+            if editing:
+                current_sources[source_idx] = new_source
+            else:
+                current_sources.append(new_source)
+            self.configuration.settings.set_sources[set_code] = current_sources
+            write_configuration(self.configuration)
+            on_save_callback()
+            dialog.destroy()
+
+        tkinter.Button(dialog, text="Save", command=_save).grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=4)
+
     def __update_set_table(self, list_box, sets):
         '''Updates the set list in the Set View table'''
         # Delete the content of the list box
@@ -2909,8 +3310,12 @@ class Overlay(ScaledWindow):
 
         for count, file in enumerate(file_list):
             row_tag = self._identify_table_row_tag(False, "", count)
+            # For new 2-segment merged files, show "Merged" in the EVENT column
+            display_file = list(file)
+            if file[1] == "":
+                display_file[1] = "Merged"
             list_box.insert("", index=count, iid=count,
-                            values=file, tag=(row_tag,))
+                            values=display_file, tag=(row_tag,))
 
     def __process_table_click(self, event, table, card_list, selected_color, fields=None):
         '''Creates the card tooltip when a table row is clicked'''
@@ -3062,6 +3467,8 @@ class Overlay(ScaledWindow):
                     "w", self.__update_settings_callback)),
                 (self.refresh_button_checkbox_value, lambda: self.refresh_button_checkbox_value.trace(
                     "w", self.__update_settings_callback)),
+                (self.openness_checkbox_value, lambda: self.openness_checkbox_value.trace(
+                    "w", self.__update_settings_callback)),
                 (self.taken_type_creature_checkbox_value, lambda: self.taken_type_creature_checkbox_value.trace(
                     "w", self.__update_taken_table)),
                 (self.taken_type_land_checkbox_value, lambda: self.taken_type_land_checkbox_value.trace(
@@ -3088,6 +3495,9 @@ class Overlay(ScaledWindow):
     def __reset_draft(self, full_reset):
         '''Clear all of the stored draft data (i.e., draft type, draft set, collected cards, etc.)'''
         self.draft.clear_draft(full_reset)
+        if full_reset:
+            self.openness_tracker = None
+            self.openness_frame.grid_remove()
 
     def __update_overlay_build(self):
         '''Checks the version.txt file in Github to determine if a new version of the application is available'''

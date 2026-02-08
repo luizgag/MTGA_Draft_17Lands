@@ -8,6 +8,8 @@ from src.file_extractor import (
     extract_types,
     initialize_card_data,
     check_date,
+    merge_datasets,
+    delete_old_set_files,
 )
 from src import constants
 from src.utils import Result
@@ -249,7 +251,7 @@ def test_export_card_data(mock_json_dump, mock_file_open, mock_check_integrity, 
     # Arrange
     file_extractor.select_sets(MagicMock(seventeenlands=["OTJ"]))
     file_extractor.combined_data = {"meta": {}, "card_ratings": {"1": "a"}}
-    expected_filename = f"OTJ_{file_extractor.draft}_{file_extractor.user_group}_{constants.SET_FILE_SUFFIX}"
+    expected_filename = f"OTJ_{constants.SET_FILE_SUFFIX}"
     expected_filepath = constants.SETS_FOLDER + os.path.sep + expected_filename
 
     # Act
@@ -260,3 +262,246 @@ def test_export_card_data(mock_json_dump, mock_file_open, mock_check_integrity, 
     mock_file_open.assert_called_once_with(expected_filepath, 'w', encoding="utf-8", errors="replace")
     mock_json_dump.assert_called_once_with(file_extractor.combined_data, mock_file_open())
     mock_check_integrity.assert_called_once_with(expected_filepath)
+
+
+# --- Helpers for merge_datasets tests ---
+
+def _make_card(name, colors, types, rarity, cmc, mana_cost, image, deck_colors_data):
+    """Build a card dict matching the real dataset JSON structure."""
+    card = {
+        constants.DATA_FIELD_NAME: name,
+        constants.DATA_FIELD_COLORS: colors,
+        constants.DATA_FIELD_TYPES: types,
+        constants.DATA_FIELD_RARITY: rarity,
+        constants.DATA_FIELD_CMC: cmc,
+        constants.DATA_FIELD_MANA_COST: mana_cost,
+        constants.DATA_SECTION_IMAGES: image,
+        "isprimarycard": 1,
+        "linkedfacetype": 0,
+        constants.DATA_FIELD_DECK_COLORS: deck_colors_data,
+    }
+    return card
+
+
+def _make_deck_colors(all_decks_stats):
+    """Build a minimal deck_colors dict with just 'All Decks'."""
+    return {constants.FILTER_OPTION_ALL_DECKS: all_decks_stats}
+
+
+def _make_dataset(card_ratings, color_ratings=None, game_count=10000):
+    """Build a dataset dict matching the real JSON structure."""
+    ds = {
+        "meta": {
+            "collection_date": "2026-01-01",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "version": 3.0,
+            "game_count": game_count,
+        },
+        "card_ratings": card_ratings,
+    }
+    if color_ratings is not None:
+        ds["color_ratings"] = color_ratings
+    return ds
+
+
+def _stats(gihwr=0.0, ohwr=0.0, gpwr=0.0, gnswr=0.0, gdwr=0.0,
+           alsa=0.0, ata=0.0, iwd=0.0, ngp=0, ngoh=0, gih=0, ngnd=0, ngd=0):
+    """Build a stats dict for a single deck_colors entry."""
+    return {
+        constants.DATA_FIELD_GIHWR: gihwr,
+        constants.DATA_FIELD_OHWR: ohwr,
+        constants.DATA_FIELD_GPWR: gpwr,
+        constants.DATA_FIELD_GNSWR: gnswr,
+        constants.DATA_FIELD_GDWR: gdwr,
+        constants.DATA_FIELD_ALSA: alsa,
+        constants.DATA_FIELD_ATA: ata,
+        constants.DATA_FIELD_IWD: iwd,
+        constants.DATA_FIELD_NGP: ngp,
+        constants.DATA_FIELD_NGOH: ngoh,
+        constants.DATA_FIELD_GIH: gih,
+        constants.DATA_FIELD_NGND: ngnd,
+        constants.DATA_FIELD_NGD: ngd,
+    }
+
+
+# --- Test merge_datasets ---
+
+class TestMergeDatasets:
+    def test_merge_single_dataset_passthrough(self):
+        """One dataset in, same dataset out unchanged."""
+        card_ratings = {
+            "100": _make_card(
+                "Murder", ["B"], ["Instant"], "common", 3, "{1}{B}{B}",
+                ["http://img/murder.jpg"],
+                _make_deck_colors(_stats(gihwr=55.0, ngp=1000, gih=500)),
+            )
+        }
+        ds = _make_dataset(card_ratings, color_ratings={"UB": 52.0, "BR": 51.0})
+        result = merge_datasets([ds], [1.0])
+
+        assert result["card_ratings"]["100"][constants.DATA_FIELD_NAME] == "Murder"
+        ad = result["card_ratings"]["100"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+        assert ad[constants.DATA_FIELD_GIHWR] == 55.0
+        assert ad[constants.DATA_FIELD_NGP] == 1000
+        assert ad[constants.DATA_FIELD_GIH] == 500
+        assert result["color_ratings"]["UB"] == 52.0
+
+    def test_merge_two_datasets_equal_weights(self):
+        """Two sources weight=1.0 each: rates are averaged, counts are summed."""
+        stats_a = _stats(gihwr=50.0, ata=3.0, ngp=1000, gih=400)
+        stats_b = _stats(gihwr=60.0, ata=5.0, ngp=2000, gih=600)
+        ds_a = _make_dataset({"1": _make_card("CardA", ["W"], ["Creature"], "common", 2, "{1}{W}", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("CardA", ["W"], ["Creature"], "common", 2, "{1}{W}", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(55.0)
+        assert ad[constants.DATA_FIELD_ATA] == pytest.approx(4.0)
+        assert ad[constants.DATA_FIELD_NGP] == 3000
+        assert ad[constants.DATA_FIELD_GIH] == 1000
+
+    def test_merge_two_datasets_unequal_weights(self):
+        """Premier weight=0.7, Traditional weight=0.3: rates are weighted-averaged."""
+        stats_premier = _stats(gihwr=55.0, ata=4.0, ngp=5000, gih=2000)
+        stats_trad = _stats(gihwr=58.0, ata=3.5, ngp=1000, gih=400)
+        ds_premier = _make_dataset({"1": _make_card("CardA", ["R"], ["Creature"], "rare", 3, "{2}{R}", [], _make_deck_colors(stats_premier))})
+        ds_trad = _make_dataset({"1": _make_card("CardA", ["R"], ["Creature"], "rare", 3, "{2}{R}", [], _make_deck_colors(stats_trad))})
+
+        result = merge_datasets([ds_premier, ds_trad], [0.7, 0.3])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        expected_gihwr = (55.0 * 0.7 + 58.0 * 0.3) / (0.7 + 0.3)
+        expected_ata = (4.0 * 0.7 + 3.5 * 0.3) / (0.7 + 0.3)
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(expected_gihwr)
+        assert ad[constants.DATA_FIELD_ATA] == pytest.approx(expected_ata)
+        # Counts are always summed regardless of weight
+        assert ad[constants.DATA_FIELD_NGP] == 6000
+        assert ad[constants.DATA_FIELD_GIH] == 2400
+
+    def test_merge_card_in_only_one_source(self):
+        """Card missing from source B: uses source A values at full weight."""
+        stats_a = _stats(gihwr=60.0, ngp=500, gih=200)
+        ds_a = _make_dataset({"1": _make_card("OnlyInA", ["G"], ["Creature"], "uncommon", 4, "{3}{G}", ["http://img/a.jpg"], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({})  # Card not present
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        assert "1" in result["card_ratings"]
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+        assert ad[constants.DATA_FIELD_GIHWR] == 60.0
+        assert ad[constants.DATA_FIELD_NGP] == 500
+
+    def test_merge_count_fields_are_summed(self):
+        """ngp, ngoh, gih, ngnd, ngd are summed (NOT averaged)."""
+        stats_a = _stats(ngp=100, ngoh=50, gih=80, ngnd=20, ngd=60)
+        stats_b = _stats(ngp=200, ngoh=100, gih=160, ngnd=40, ngd=120)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        assert ad[constants.DATA_FIELD_NGP] == 300
+        assert ad[constants.DATA_FIELD_NGOH] == 150
+        assert ad[constants.DATA_FIELD_GIH] == 240
+        assert ad[constants.DATA_FIELD_NGND] == 60
+        assert ad[constants.DATA_FIELD_NGD] == 180
+
+    def test_merge_rate_fields_are_weighted_averaged(self):
+        """gihwr, ohwr, gpwr, gnswr, gdwr are weighted-averaged."""
+        stats_a = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0, alsa=5.0, ata=3.0, iwd=2.0)
+        stats_b = _stats(gihwr=60.0, ohwr=58.0, gpwr=62.0, gnswr=56.0, gdwr=64.0, alsa=3.0, ata=2.0, iwd=4.0)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b], [0.6, 0.4])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        for field, va, vb in [
+            (constants.DATA_FIELD_GIHWR, 50.0, 60.0),
+            (constants.DATA_FIELD_OHWR, 48.0, 58.0),
+            (constants.DATA_FIELD_GPWR, 52.0, 62.0),
+            (constants.DATA_FIELD_GNSWR, 46.0, 56.0),
+            (constants.DATA_FIELD_GDWR, 54.0, 64.0),
+            (constants.DATA_FIELD_ALSA, 5.0, 3.0),
+            (constants.DATA_FIELD_ATA, 3.0, 2.0),
+            (constants.DATA_FIELD_IWD, 2.0, 4.0),
+        ]:
+            expected = (va * 0.6 + vb * 0.4) / (0.6 + 0.4)
+            assert ad[field] == pytest.approx(expected), f"Field {field} mismatch"
+
+    def test_merge_nonumeric_fields_from_first_source(self):
+        """name, types, colors preserved from first source that has the card."""
+        stats = _stats(gihwr=50.0)
+        ds_a = _make_dataset({"1": _make_card("NameA", ["W"], ["Creature"], "rare", 3, "{2}{W}", ["http://img/a.jpg"], _make_deck_colors(stats))})
+        ds_b = _make_dataset({"1": _make_card("NameB", ["B"], ["Instant"], "common", 2, "{1}{B}", ["http://img/b.jpg"], _make_deck_colors(stats))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        card = result["card_ratings"]["1"]
+        assert card[constants.DATA_FIELD_NAME] == "NameA"
+        assert card[constants.DATA_FIELD_COLORS] == ["W"]
+        assert card[constants.DATA_FIELD_TYPES] == ["Creature"]
+        assert card[constants.DATA_FIELD_RARITY] == "rare"
+        assert card[constants.DATA_SECTION_IMAGES] == ["http://img/a.jpg"]
+
+    def test_merge_color_ratings_blended(self):
+        """color_ratings section is also weighted-averaged."""
+        ds_a = _make_dataset({}, color_ratings={"WU": 55.0, "BR": 50.0}, game_count=8000)
+        ds_b = _make_dataset({}, color_ratings={"WU": 60.0, "BR": 52.0}, game_count=4000)
+
+        result = merge_datasets([ds_a, ds_b], [0.7, 0.3])
+        expected_wu = (55.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3)
+        expected_br = (50.0 * 0.7 + 52.0 * 0.3) / (0.7 + 0.3)
+        assert result["color_ratings"]["WU"] == pytest.approx(expected_wu)
+        assert result["color_ratings"]["BR"] == pytest.approx(expected_br)
+
+    def test_merge_zero_weight_source_excluded(self):
+        """A source with weight=0.0 contributes nothing."""
+        stats_a = _stats(gihwr=55.0, ngp=1000, gih=500)
+        stats_b = _stats(gihwr=99.0, ngp=9999, gih=9999)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))},
+                             color_ratings={"WU": 52.0})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))},
+                             color_ratings={"WU": 99.0})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 0.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+        assert ad[constants.DATA_FIELD_GIHWR] == 55.0
+        # Count fields from zero-weight source should not be included
+        assert ad[constants.DATA_FIELD_NGP] == 1000
+        assert ad[constants.DATA_FIELD_GIH] == 500
+        assert result["color_ratings"]["WU"] == pytest.approx(52.0)
+
+
+@patch("src.file_extractor.os.remove")
+@patch("src.file_extractor.os.listdir")
+def test_delete_old_set_files(mock_listdir, mock_remove):
+    """Only old 4-segment files for the matching set are deleted."""
+    mock_listdir.return_value = [
+        "ECL_PremierDraft_All_Data.json",   # old format, matches ECL -> delete
+        "ECL_TradDraft_Top_Data.json",      # old format, matches ECL -> delete
+        "ECL_Data.json",                    # new format, 2 segments -> keep
+        "OTJ_PremierDraft_All_Data.json",   # old format, different set -> keep
+        "MH3_QuickDraft_Bottom_Data.json",  # old format, different set -> keep
+    ]
+
+    delete_old_set_files("ECL")
+
+    assert mock_remove.call_count == 2
+    deleted = [call.args[0] for call in mock_remove.call_args_list]
+    assert os.path.join(constants.SETS_FOLDER, "ECL_PremierDraft_All_Data.json") in deleted
+    assert os.path.join(constants.SETS_FOLDER, "ECL_TradDraft_Top_Data.json") in deleted
+
+
+@patch("src.file_extractor.os.remove")
+@patch("src.file_extractor.os.listdir")
+def test_delete_old_set_files_case_insensitive(mock_listdir, mock_remove):
+    """Set code matching is case-insensitive."""
+    mock_listdir.return_value = [
+        "ecl_PremierDraft_All_Data.json",  # lowercase set code -> still matches
+    ]
+
+    delete_old_set_files("ECL")
+
+    assert mock_remove.call_count == 1

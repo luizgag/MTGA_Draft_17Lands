@@ -2,7 +2,7 @@
 import json
 import os
 from pydantic import BaseModel, field_validator, Field
-from typing import Tuple
+from typing import Dict, List, Tuple
 from src import constants
 from src.logger import create_logger
 
@@ -18,6 +18,15 @@ class DeckType(BaseModel):
     maximum_card_count: int = 0
     recommended_creature_count: int = 0
     cmc_average: float = 0.0
+
+
+class DatasetSource(BaseModel):
+    """A single 17Lands data source with filter configuration."""
+    format: str = "PremierDraft"
+    user_group: str = "All"
+    start_date: str = ""
+    end_date: str = ""
+    weight: float = 1.0
 
 
 class Settings(BaseModel):
@@ -59,6 +68,7 @@ class Settings(BaseModel):
     platform: str = constants.PLATFORM_MTGA
     mtgo_log_folder: str = ""
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
+    set_sources: Dict[str, List[DatasetSource]] = Field(default_factory=dict)
 
     @field_validator('deck_filter')
     @classmethod
@@ -121,6 +131,7 @@ class Features(BaseModel):
     override_scale_factor: float = 0.0
     hotkey_enabled: bool = True
     images_enabled: bool = True
+    archetype_openness_enabled: bool = False
 
 
 class CardData(BaseModel):

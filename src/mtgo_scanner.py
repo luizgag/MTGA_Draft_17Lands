@@ -181,7 +181,16 @@ class MtgoScanner:
                     event_type = file[1]
                     user_group = file[2]
                     location = file[6]
-                    if re.search(r"^[Yy]\d{2}", set_code):
+                    if event_type == "":
+                        # New 2-segment merged file
+                        if re.search(r"^[Yy]\d{2}", set_code):
+                            type_string = f"[{set_code[0:3]}] Merged"
+                        elif re.search(r'[.\-/]', set_code):
+                            dataset_type = re.split(r'[.\-/]', set_code)[-1]
+                            type_string = f"[{dataset_type[0:3]}] Merged"
+                        else:
+                            type_string = "Merged"
+                    elif re.search(r"^[Yy]\d{2}", set_code):
                         type_string = f"[{set_code[0:3]}]{event_type} ({user_group})"
                     elif re.search(r'[.\-/]', set_code):
                         dataset_type = re.split(r'[.\-/]', set_code)[-1]
@@ -270,6 +279,10 @@ class MtgoScanner:
     def retrieve_current_pack_and_pick(self):
         '''Return the current pack and pick numbers'''
         return self.current_pack, self.current_pick
+
+    def retrieve_current_pick_in_pack(self):
+        '''Return the pick number within the current pack (1-based, resets each pack)'''
+        return self.current_pick_in_pack
 
     def retrieve_current_limited_event(self):
         '''Return the set code string and event type string'''

@@ -202,22 +202,24 @@ Pack 1 pick 1:
         assert len(scanner.taken_cards) == 0
         assert len(scanner.pack_cards) == 3
 
-        # Phase 2: Append pick marker
-        phase2_content = """--> Card Beta
-    Card Delta
-
-Picked: Card Beta
+        # Phase 2: Append a complete new pack block (realistic MTGO log growth)
+        phase2_content = """
+------ Pack 1: Test Set ------
 
 Pack 1 pick 2:
-    Card Epsilon
+    Card Delta
+--> Card Epsilon
     Card Zeta
+
+Picked: Card Epsilon
 """
         with open(log_file, 'a') as f:
             f.write(phase2_content)
 
         result = scanner.draft_data_search()
         assert result is True
-        assert "Card Beta" in scanner.taken_cards
+        assert "Card Epsilon" in scanner.taken_cards
+        assert scanner.state == MtgoScannerState.PICK_MADE
 
 
 class TestPackTransitions:
