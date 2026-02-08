@@ -18,7 +18,7 @@ from src.configuration import read_configuration, write_configuration, reset_con
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
-from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets
+from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets, delete_old_set_files
 from src.utils import retrieve_local_set_list, open_file, clean_string, AutocompleteEntry
 from src import constants
 from src.logger import create_logger
@@ -1962,6 +1962,8 @@ class Overlay(ScaledWindow):
             set_value.trace_add("write", lambda *args, event_widget=event_entry, event_selection=event_value, set_selection=set_value,
                             set_list=sets: self.__update_event_format(event_widget, event_selection, set_selection, set_list, *args))
 
+            set_value.trace_add("write", lambda *args: _on_set_change_sources(*args))
+
             draft_groups = constants.LIMITED_GROUPS_LIST
             group_value = tkinter.StringVar(self.root)
             group_entry = OptionMenu(popup, group_value, draft_groups[0], *draft_groups)
@@ -1996,9 +1998,17 @@ class Overlay(ScaledWindow):
             sources_btn_frame = tkinter.Frame(sources_frame)
             sources_btn_frame.pack(side=tkinter.RIGHT, fill=tkinter.Y, padx=2, pady=2)
 
+            def _get_current_set_code():
+                selected = set_value.get()
+                if selected and selected in sets:
+                    return clean_string(sets[selected].seventeenlands[0])
+                return ""
+
             def _refresh_sources_list():
                 sources_listbox.delete(0, tkinter.END)
-                for idx, src in enumerate(self.configuration.settings.dataset_sources):
+                code = _get_current_set_code()
+                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                for idx, src in enumerate(sources):
                     if idx == 0:
                         continue  # First source comes from the main UI controls
                     label = f"{src.format} | {src.user_group} | w={src.weight}"
@@ -2007,22 +2017,42 @@ class Overlay(ScaledWindow):
                     sources_listbox.insert(tkinter.END, label)
 
             def _add_source():
-                self._open_source_editor(popup, None, _refresh_sources_list)
+                code = _get_current_set_code()
+                self._open_source_editor(popup, code, None, _refresh_sources_list)
 
             def _edit_source():
                 sel = sources_listbox.curselection()
                 if sel:
+                    code = _get_current_set_code()
                     source_idx = sel[0] + 1  # +1 because index 0 is the primary source
-                    self._open_source_editor(popup, source_idx, _refresh_sources_list)
+                    self._open_source_editor(popup, code, source_idx, _refresh_sources_list)
 
             def _remove_source():
                 sel = sources_listbox.curselection()
                 if sel:
+                    code = _get_current_set_code()
                     source_idx = sel[0] + 1
-                    if source_idx < len(self.configuration.settings.dataset_sources):
-                        self.configuration.settings.dataset_sources.pop(source_idx)
+                    sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                    if source_idx < len(sources):
+                        sources.pop(source_idx)
+                        self.configuration.settings.set_sources[code] = sources
                         write_configuration(self.configuration)
                         _refresh_sources_list()
+
+            def _on_set_change_sources(*args):
+                code = _get_current_set_code()
+                sources = self.configuration.settings.set_sources.get(code, [DatasetSource()])
+                # Populate main UI controls from primary source
+                primary = sources[0]
+                event_value.set(primary.format)
+                group_value.set(primary.user_group)
+                if primary.start_date:
+                    start_entry.delete(0, tkinter.END)
+                    start_entry.insert(0, primary.start_date)
+                if primary.end_date:
+                    end_entry.delete(0, tkinter.END)
+                    end_entry.insert(0, primary.end_date)
+                _refresh_sources_list()
 
             add_src_btn = tkinter.Button(sources_btn_frame, text="Add", command=_add_source)
             add_src_btn.pack(fill=tkinter.X, pady=1)
@@ -2997,7 +3027,7 @@ class Overlay(ScaledWindow):
                 if time_difference >= constants.DATASET_DOWNLOAD_RATE_LIMIT_SEC:
                     message_box = tkinter.messagebox.askyesno(
                                     title="Download",
-                                    message=f"Are you sure that you want to download the {draft_set.get()} {draft.get()} dataset?"
+                                    message=f"Are you sure that you want to download the {draft_set.get()} dataset?"
                                  )
                     if not message_box:
                         break
@@ -3036,6 +3066,8 @@ class Overlay(ScaledWindow):
 
                 self.last_download = current_time
 
+                set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
+
                 status.set("Downloading Color Ratings")
                 result, game_count = self.extractor.retrieve_17lands_color_ratings()
 
@@ -3052,9 +3084,18 @@ class Overlay(ScaledWindow):
                             break
                     else:
                         notify = False
-                        set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
                         for file in file_list:
-                            if(
+                            if file[1] == "":
+                                # New merged format: skip event_type/user_group comparison
+                                if(
+                                    set_code == file[0] and
+                                    start.get() == file[3] and
+                                    (end.get() == file[4] or end.get() > file[4]) and
+                                    game_count == file[5]
+                                ):
+                                    notify = True
+                                    break
+                            elif(
                                 set_code == file[0] and
                                 draft.get() == file[1] and
                                 user_group.get() == file[2] and
@@ -3077,6 +3118,18 @@ class Overlay(ScaledWindow):
                                 status.set("Download Cancelled")
                                 break
 
+                # Sync main UI controls to per-set primary source config
+                primary_source = DatasetSource(
+                    format=draft.get(),
+                    user_group=user_group.get(),
+                    start_date=start.get(),
+                    end_date=end.get(),
+                    weight=1.0,
+                )
+                per_set_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
+                per_set_sources[0] = primary_source
+                self.configuration.settings.set_sources[set_code] = per_set_sources
+
                 result, result_string, temp_size = self.extractor.download_card_data(
                     popup, progress, status, self.configuration.card_data.database_size)
 
@@ -3085,7 +3138,7 @@ class Overlay(ScaledWindow):
 
                 # Multi-source merge: download additional sources and merge
                 additional_sources = [
-                    s for s in self.configuration.settings.dataset_sources
+                    s for s in per_set_sources
                     if s.weight > 0
                 ]
                 if len(additional_sources) > 1:
@@ -3127,14 +3180,12 @@ class Overlay(ScaledWindow):
                         merged = merge_datasets(all_datasets, all_weights)
                         self.extractor.combined_data = merged
 
-                    # Restore primary extractor state for export
-                    self.extractor.set_draft_type(draft.get())
-                    self.extractor.set_user_group(user_group.get())
-
                 if not self.extractor.export_card_data():
                     result = False
                     result_string = "File Write Failure"
                     break
+                # Delete old 4-segment files now that new merged file exists
+                delete_old_set_files(set_code)
                 progress['value'] = 100
                 return_size = temp_size
                 popup.update()
@@ -3165,11 +3216,12 @@ class Overlay(ScaledWindow):
         popup.update()
         return
 
-    def _open_source_editor(self, parent, source_idx, on_save_callback):
+    def _open_source_editor(self, parent, set_code, source_idx, on_save_callback):
         """Open a small dialog to add or edit a DatasetSource."""
         editing = source_idx is not None
+        sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
         if editing:
-            source = self.configuration.settings.dataset_sources[source_idx]
+            source = sources[source_idx]
         else:
             source = DatasetSource()
 
@@ -3222,10 +3274,12 @@ class Overlay(ScaledWindow):
                 end_date=end_entry.get().strip(),
                 weight=weight,
             )
+            current_sources = self.configuration.settings.set_sources.get(set_code, [DatasetSource()])
             if editing:
-                self.configuration.settings.dataset_sources[source_idx] = new_source
+                current_sources[source_idx] = new_source
             else:
-                self.configuration.settings.dataset_sources.append(new_source)
+                current_sources.append(new_source)
+            self.configuration.settings.set_sources[set_code] = current_sources
             write_configuration(self.configuration)
             on_save_callback()
             dialog.destroy()
@@ -3256,8 +3310,12 @@ class Overlay(ScaledWindow):
 
         for count, file in enumerate(file_list):
             row_tag = self._identify_table_row_tag(False, "", count)
+            # For new 2-segment merged files, show "Merged" in the EVENT column
+            display_file = list(file)
+            if file[1] == "":
+                display_file[1] = "Merged"
             list_box.insert("", index=count, iid=count,
-                            values=file, tag=(row_tag,))
+                            values=display_file, tag=(row_tag,))
 
     def __process_table_click(self, event, table, card_list, selected_color, fields=None):
         '''Creates the card tooltip when a table row is clicked'''

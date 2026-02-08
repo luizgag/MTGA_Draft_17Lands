@@ -1005,10 +1005,11 @@ class ArenaScanner:
                     logger.error(error_string)
 
                 # Sort the list by draft type and end date
+                # Merged files (event_type=="") are treated as matching
                 if file_list:
                     file_list.sort(key=lambda x: (
-                        datetime.strptime(x[4], "%Y-%m-%d") if x[1] == draft_type else datetime.min,  # Sort matching events by newest to oldest
-                        x[1] != draft_type,  # Sort non-matching events
+                        datetime.strptime(x[4], "%Y-%m-%d") if x[1] in (draft_type, "") else datetime.min,  # Sort matching/merged events by newest to oldest
+                        x[1] not in (draft_type, ""),  # Sort non-matching events
                     ), reverse=True)  # Reverse sorting order
 
                 for file in file_list:
@@ -1016,7 +1017,16 @@ class ArenaScanner:
                     event_type = file[1]
                     user_group = file[2]
                     location = file[6]
-                    if re.search(r"^[Yy]\d{2}", set_code):
+                    if event_type == "":
+                        # New 2-segment merged file
+                        if re.search(r"^[Yy]\d{2}", set_code):
+                            type_string = f"[{set_code[0:3]}] Merged"
+                        elif re.search(r'[.\-/]', set_code):
+                            dataset_type = re.split(r'[.\-/]', set_code)[-1]
+                            type_string = f"[{dataset_type[0:3]}] Merged"
+                        else:
+                            type_string = "Merged"
+                    elif re.search(r"^[Yy]\d{2}", set_code):
                         # Alchemy sets use the [Y##]{event_type} ({user_group}) naming scheme and everything else uses <event_type> ({user_group}) scheme
                         type_string = f"[{set_code[0:3]}]{event_type} ({user_group})"
                     elif re.search(r'[.\-/]', set_code):

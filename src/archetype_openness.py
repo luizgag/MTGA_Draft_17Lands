@@ -26,6 +26,7 @@ class ArchetypeConfig(BaseModel):
     weight_curve: str = "linear"
     pack_weights: List[float] = Field(default_factory=lambda: [1.0, 1.0, 1.0])
     bayesian_prior: float = 1.0
+    opportunity_cost_decay: float = 0.1
     card_weight_threshold: float = 0.4
     archetypes: List[Archetype] = Field(default_factory=list)
 
@@ -144,6 +145,7 @@ class OpennessTracker:
     """Tracks archetype openness signals during a draft."""
 
     def __init__(self, config: ArchetypeConfig):
+        self.config = config
         self.scoring_method = config.scoring_method
         self.weight_curve = config.weight_curve
         self.pack_weights = config.pack_weights
@@ -184,12 +186,22 @@ class OpennessTracker:
                         continue
                     pick_weight = self._pick_weight(pick_number, max_picks=14)
                     raw_signal = ((pick_number - ata) / ata) * pick_weight
-                else:
+                    signal = raw_signal * card_weight * pack_weight
+                elif self.scoring_method == "bayesian_beta":
+                    if ata == 0.0:
+                        continue
+                    if pick_number > ata:
+                        # Card wheeling past ATA -> positive evidence archetype is open
+                        raw_signal = (pick_number - ata) / ata
+                        signal = raw_signal * card_weight * pack_weight
+                    else:
+                        # Card appeared at/before ATA -> small opportunity cost
+                        signal = -(self.config.opportunity_cost_decay * card_weight * pack_weight)
+                else:  # simple
                     if ata == 0.0:
                         continue
                     raw_signal = (pick_number - ata) / ata
-
-                signal = raw_signal * card_weight * pack_weight
+                    signal = raw_signal * card_weight * pack_weight
 
                 self.signals.append({
                     "archetype": archetype.name,

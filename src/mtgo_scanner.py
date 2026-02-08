@@ -181,7 +181,16 @@ class MtgoScanner:
                     event_type = file[1]
                     user_group = file[2]
                     location = file[6]
-                    if re.search(r"^[Yy]\d{2}", set_code):
+                    if event_type == "":
+                        # New 2-segment merged file
+                        if re.search(r"^[Yy]\d{2}", set_code):
+                            type_string = f"[{set_code[0:3]}] Merged"
+                        elif re.search(r'[.\-/]', set_code):
+                            dataset_type = re.split(r'[.\-/]', set_code)[-1]
+                            type_string = f"[{dataset_type[0:3]}] Merged"
+                        else:
+                            type_string = "Merged"
+                    elif re.search(r"^[Yy]\d{2}", set_code):
                         type_string = f"[{set_code[0:3]}]{event_type} ({user_group})"
                     elif re.search(r'[.\-/]', set_code):
                         dataset_type = re.split(r'[.\-/]', set_code)[-1]

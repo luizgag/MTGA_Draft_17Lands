@@ -74,18 +74,23 @@ def retrieve_local_set_list(codes, names = None):
     for file in os.listdir(SETS_FOLDER):
         try:
             name_segments = file.split("_")
-            if len(name_segments) == 4:
+            if len(name_segments) == 2:
+                set_code = name_segments[0].upper()
+                event_type = ""
+                user_group = ""
+                file_suffix = name_segments[1]
+            elif len(name_segments) == 4:
                 set_code = name_segments[0].upper()
                 event_type = name_segments[1]
                 user_group = name_segments[2]
                 file_suffix = name_segments[3]
             else:
                 continue
-                
-            if ((set_code not in cleaned_codes) or
-                (event_type not in LIMITED_TYPES_DICT) or
-                (user_group not in LIMITED_GROUPS_LIST) or
-                (file_suffix != SET_FILE_SUFFIX)):
+
+            if set_code not in cleaned_codes or file_suffix != SET_FILE_SUFFIX:
+                continue
+
+            if event_type != "" and (event_type not in LIMITED_TYPES_DICT or user_group not in LIMITED_GROUPS_LIST):
                 continue
                 
             if names:

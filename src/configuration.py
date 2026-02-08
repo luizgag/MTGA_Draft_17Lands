@@ -2,7 +2,7 @@
 import json
 import os
 from pydantic import BaseModel, field_validator, Field
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 from src import constants
 from src.logger import create_logger
 
@@ -68,7 +68,7 @@ class Settings(BaseModel):
     platform: str = constants.PLATFORM_MTGA
     mtgo_log_folder: str = ""
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
-    dataset_sources: List[DatasetSource] = Field(default_factory=lambda: [DatasetSource()])
+    set_sources: Dict[str, List[DatasetSource]] = Field(default_factory=dict)
 
     @field_validator('deck_filter')
     @classmethod

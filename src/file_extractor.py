@@ -25,6 +25,20 @@ if not os.path.exists(constants.TEMP_FOLDER):
     os.makedirs(constants.TEMP_FOLDER)
 
 
+def delete_old_set_files(set_code: str):
+    """Delete old 4-segment dataset files for a set. Leaves new 2-segment files."""
+    upper_code = set_code.upper()
+    for filename in os.listdir(constants.SETS_FOLDER):
+        segments = filename.split("_")
+        if len(segments) == 4 and segments[0].upper() == upper_code:
+            file_path = os.path.join(constants.SETS_FOLDER, filename)
+            try:
+                os.remove(file_path)
+                logger.info("Deleted old dataset file: %s", filename)
+            except OSError as error:
+                logger.error("Failed to delete %s: %s", filename, error)
+
+
 def merge_datasets(datasets: List[dict], weights: List[float]) -> dict:
     """Merge multiple 17Lands dataset JSON dicts into one using weighted averages.
 
@@ -1104,7 +1118,7 @@ class FileExtractor:
         result = True
         try:
             # Reformat the 17Lands set string so "Cube - Powered" becomes "CUBE-POWERED" in the dataset filename
-            output_file = "_".join((clean_string(self.selected_sets.seventeenlands[0]), self.draft, self.user_group, constants.SET_FILE_SUFFIX))
+            output_file = "_".join((clean_string(self.selected_sets.seventeenlands[0]), constants.SET_FILE_SUFFIX))
             location = os.path.join(constants.SETS_FOLDER, output_file)
 
             with open(location, 'w', encoding="utf-8", errors="replace") as file:

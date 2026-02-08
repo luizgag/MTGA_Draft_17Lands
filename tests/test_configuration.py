@@ -107,20 +107,17 @@ def test_features_archetype_openness_default():
     assert features.archetype_openness_enabled is False
 
 
-def test_dataset_sources_default():
-    """Settings.dataset_sources defaults to a single PremierDraft/All source."""
+def test_set_sources_default():
+    """Settings.set_sources defaults to empty dict."""
     settings = Settings()
-    assert len(settings.dataset_sources) == 1
-    assert settings.dataset_sources[0].format == "PremierDraft"
-    assert settings.dataset_sources[0].user_group == "All"
-    assert settings.dataset_sources[0].weight == 1.0
+    assert settings.set_sources == {}
 
 
-def test_dataset_sources_backward_compat(tmp_path):
-    """Old config.json without dataset_sources loads with the default."""
+def test_set_sources_backward_compat(tmp_path):
+    """Old config.json missing set_sources loads fine (empty dict)."""
     old_config = Configuration()
     config_dict = old_config.model_dump()
-    del config_dict["settings"]["dataset_sources"]
+    del config_dict["settings"]["set_sources"]
 
     file_location = tmp_path / "config.json"
     with open(file_location, "w") as f:
@@ -128,27 +125,51 @@ def test_dataset_sources_backward_compat(tmp_path):
 
     config, success = read_configuration(str(file_location))
     assert success is True
-    assert len(config.settings.dataset_sources) == 1
-    assert config.settings.dataset_sources[0].format == "PremierDraft"
+    assert config.settings.set_sources == {}
 
 
-def test_dataset_sources_roundtrip(tmp_path):
-    """Multiple dataset sources survive write/read cycle."""
-    config = Configuration()
-    config.settings.dataset_sources = [
-        DatasetSource(format="PremierDraft", user_group="All", weight=0.7),
-        DatasetSource(format="TradDraft", user_group="Top", weight=0.3),
+def test_old_dataset_sources_ignored(tmp_path):
+    """Old config.json with dataset_sources key doesn't crash."""
+    config_dict = Configuration().model_dump()
+    config_dict["settings"]["dataset_sources"] = [
+        {"format": "PremierDraft", "user_group": "All", "start_date": "", "end_date": "", "weight": 1.0}
     ]
+
+    file_location = tmp_path / "config.json"
+    with open(file_location, "w") as f:
+        json.dump(config_dict, f)
+
+    config, success = read_configuration(str(file_location))
+    assert success is True
+    assert config.settings.set_sources == {}
+
+
+def test_set_sources_roundtrip(tmp_path):
+    """Per-set sources survive write/read cycle."""
+    config = Configuration()
+    config.settings.set_sources = {
+        "ECL": [
+            DatasetSource(format="PremierDraft", user_group="All", weight=0.7),
+            DatasetSource(format="TradDraft", user_group="Top", weight=0.3),
+        ],
+        "OTJ": [
+            DatasetSource(format="QuickDraft", user_group="All", weight=1.0),
+        ],
+    }
 
     file_location = tmp_path / "config.json"
     write_configuration(config, str(file_location))
     loaded, success = read_configuration(str(file_location))
 
     assert success is True
-    assert len(loaded.settings.dataset_sources) == 2
-    assert loaded.settings.dataset_sources[0].format == "PremierDraft"
-    assert loaded.settings.dataset_sources[0].weight == 0.7
-    assert loaded.settings.dataset_sources[1].format == "TradDraft"
-    assert loaded.settings.dataset_sources[1].user_group == "Top"
-    assert loaded.settings.dataset_sources[1].weight == 0.3
+    assert "ECL" in loaded.settings.set_sources
+    assert "OTJ" in loaded.settings.set_sources
+    assert len(loaded.settings.set_sources["ECL"]) == 2
+    assert loaded.settings.set_sources["ECL"][0].format == "PremierDraft"
+    assert loaded.settings.set_sources["ECL"][0].weight == 0.7
+    assert loaded.settings.set_sources["ECL"][1].format == "TradDraft"
+    assert loaded.settings.set_sources["ECL"][1].user_group == "Top"
+    assert loaded.settings.set_sources["ECL"][1].weight == 0.3
+    assert len(loaded.settings.set_sources["OTJ"]) == 1
+    assert loaded.settings.set_sources["OTJ"][0].format == "QuickDraft"
 

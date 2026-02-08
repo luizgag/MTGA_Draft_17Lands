@@ -9,6 +9,7 @@ from src.file_extractor import (
     initialize_card_data,
     check_date,
     merge_datasets,
+    delete_old_set_files,
 )
 from src import constants
 from src.utils import Result
@@ -250,7 +251,7 @@ def test_export_card_data(mock_json_dump, mock_file_open, mock_check_integrity, 
     # Arrange
     file_extractor.select_sets(MagicMock(seventeenlands=["OTJ"]))
     file_extractor.combined_data = {"meta": {}, "card_ratings": {"1": "a"}}
-    expected_filename = f"OTJ_{file_extractor.draft}_{file_extractor.user_group}_{constants.SET_FILE_SUFFIX}"
+    expected_filename = f"OTJ_{constants.SET_FILE_SUFFIX}"
     expected_filepath = constants.SETS_FOLDER + os.path.sep + expected_filename
 
     # Act
@@ -471,3 +472,36 @@ class TestMergeDatasets:
         assert ad[constants.DATA_FIELD_NGP] == 1000
         assert ad[constants.DATA_FIELD_GIH] == 500
         assert result["color_ratings"]["WU"] == pytest.approx(52.0)
+
+
+@patch("src.file_extractor.os.remove")
+@patch("src.file_extractor.os.listdir")
+def test_delete_old_set_files(mock_listdir, mock_remove):
+    """Only old 4-segment files for the matching set are deleted."""
+    mock_listdir.return_value = [
+        "ECL_PremierDraft_All_Data.json",   # old format, matches ECL -> delete
+        "ECL_TradDraft_Top_Data.json",      # old format, matches ECL -> delete
+        "ECL_Data.json",                    # new format, 2 segments -> keep
+        "OTJ_PremierDraft_All_Data.json",   # old format, different set -> keep
+        "MH3_QuickDraft_Bottom_Data.json",  # old format, different set -> keep
+    ]
+
+    delete_old_set_files("ECL")
+
+    assert mock_remove.call_count == 2
+    deleted = [call.args[0] for call in mock_remove.call_args_list]
+    assert os.path.join(constants.SETS_FOLDER, "ECL_PremierDraft_All_Data.json") in deleted
+    assert os.path.join(constants.SETS_FOLDER, "ECL_TradDraft_Top_Data.json") in deleted
+
+
+@patch("src.file_extractor.os.remove")
+@patch("src.file_extractor.os.listdir")
+def test_delete_old_set_files_case_insensitive(mock_listdir, mock_remove):
+    """Set code matching is case-insensitive."""
+    mock_listdir.return_value = [
+        "ecl_PremierDraft_All_Data.json",  # lowercase set code -> still matches
+    ]
+
+    delete_old_set_files("ECL")
+
+    assert mock_remove.call_count == 1

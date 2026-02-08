@@ -549,7 +549,11 @@ class TestBayesianBetaScoring:
         assert scores["BG Elves"]["score"] > 0.5
 
     def test_negative_signal_decreases_probability(self):
-        """Card seen earlier than ATA -> P(open) < 0.5."""
+        """Card seen at/before ATA -> opportunity cost pushes P(open) < 0.5.
+
+        pick=3, ata=7: not wheeling -> beta += 0.1 * 0.9 * 1.0 = 0.09
+        alpha = 1.0, beta = 1.09 -> P = 1.0/2.09 ≈ 0.4785
+        """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
         tracker.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
         scores = tracker.get_scores()
@@ -585,18 +589,18 @@ class TestBayesianBetaScoring:
         assert scores["UB Control"]["score"] == pytest.approx(1.7 / 2.7, abs=0.001)
 
     def test_mixed_signals_intermediate(self):
-        """Positive then negative signals produce an intermediate value.
+        """Positive then opportunity-cost signals produce an intermediate value.
 
-        Elf Lord pick=7 ata=3 -> positive, raw=(7-3)/3*0.9=1.2 -> alpha += 1.2
-        Elf Lord pick=2 ata=5 -> negative, raw=(2-5)/5*0.9=-0.54 -> beta += 0.54
-        alpha = 1.0 + 1.2 = 2.2, beta = 1.0 + 0.54 = 1.54
-        P = 2.2 / 3.74 = 0.5882
+        Elf Lord pick=7 ata=3 -> wheeling, raw=(7-3)/3*0.9=1.2 -> alpha += 1.2
+        Elf Lord pick=2 ata=5 -> not wheeling, opportunity cost=0.1*0.9*1.0=0.09 -> beta += 0.09
+        alpha = 1.0 + 1.2 = 2.2, beta = 1.0 + 0.09 = 1.09
+        P = 2.2 / 3.29 = 0.6687
         """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
         tracker.record_pack([_make_card("Elf Lord", ata=5.0)], pick_number=2, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(2.2 / 3.74, abs=0.001)
+        assert scores["BG Elves"]["score"] == pytest.approx(2.2 / 3.29, abs=0.001)
 
     def test_pack_weight_scales_signal(self):
         """Pack weight multiplies the signal contribution.
@@ -696,6 +700,39 @@ class TestBayesianBetaScoring:
         width_late = scores_late["BG Elves"]["interval"][1] - scores_late["BG Elves"]["interval"][0]
 
         assert width_late < width_early
+
+
+    def test_opportunity_cost_decay_configurable(self):
+        """Larger decay constant produces stronger downward pressure.
+
+        Default decay=0.1: beta += 0.1 * 0.9 = 0.09 -> P = 1.0/2.09 ≈ 0.4785
+        Custom decay=0.2: beta += 0.2 * 0.9 = 0.18 -> P = 1.0/2.18 ≈ 0.4587
+        """
+        # Default decay (0.1)
+        tracker_default = OpennessTracker(BAYESIAN_CONFIG)
+        tracker_default.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
+        score_default = tracker_default.get_scores()["BG Elves"]["score"]
+
+        # Higher decay (0.2)
+        config_high_decay = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_beta",
+            bayesian_prior=1.0,
+            opportunity_cost_decay=0.2,
+            archetypes=[Archetype(name="BG Elves", cards={"Elf Lord": 0.9})],
+        )
+        tracker_high = OpennessTracker(config_high_decay)
+        tracker_high.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
+        score_high = tracker_high.get_scores()["BG Elves"]["score"]
+
+        # Higher decay -> lower P(open)
+        assert score_high < score_default < 0.5
+
+    def test_config_default_opportunity_cost_decay(self):
+        """Config without opportunity_cost_decay field gets default 0.1."""
+        data = {"set_code": "TST", "scoring_method": "bayesian_beta"}
+        config = ArchetypeConfig.model_validate(data)
+        assert config.opportunity_cost_decay == 0.1
 
 
 class TestATANormalization:
