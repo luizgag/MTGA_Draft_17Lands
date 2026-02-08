@@ -9,7 +9,9 @@ from src.configuration import (
     write_configuration,
     reset_configuration,
     Configuration,
-    Features
+    DatasetSource,
+    Features,
+    Settings,
 )
 
 
@@ -103,4 +105,50 @@ def test_features_archetype_openness_default():
     """archetype_openness_enabled defaults to False."""
     features = Features()
     assert features.archetype_openness_enabled is False
+
+
+def test_dataset_sources_default():
+    """Settings.dataset_sources defaults to a single PremierDraft/All source."""
+    settings = Settings()
+    assert len(settings.dataset_sources) == 1
+    assert settings.dataset_sources[0].format == "PremierDraft"
+    assert settings.dataset_sources[0].user_group == "All"
+    assert settings.dataset_sources[0].weight == 1.0
+
+
+def test_dataset_sources_backward_compat(tmp_path):
+    """Old config.json without dataset_sources loads with the default."""
+    old_config = Configuration()
+    config_dict = old_config.model_dump()
+    del config_dict["settings"]["dataset_sources"]
+
+    file_location = tmp_path / "config.json"
+    with open(file_location, "w") as f:
+        json.dump(config_dict, f)
+
+    config, success = read_configuration(str(file_location))
+    assert success is True
+    assert len(config.settings.dataset_sources) == 1
+    assert config.settings.dataset_sources[0].format == "PremierDraft"
+
+
+def test_dataset_sources_roundtrip(tmp_path):
+    """Multiple dataset sources survive write/read cycle."""
+    config = Configuration()
+    config.settings.dataset_sources = [
+        DatasetSource(format="PremierDraft", user_group="All", weight=0.7),
+        DatasetSource(format="TradDraft", user_group="Top", weight=0.3),
+    ]
+
+    file_location = tmp_path / "config.json"
+    write_configuration(config, str(file_location))
+    loaded, success = read_configuration(str(file_location))
+
+    assert success is True
+    assert len(loaded.settings.dataset_sources) == 2
+    assert loaded.settings.dataset_sources[0].format == "PremierDraft"
+    assert loaded.settings.dataset_sources[0].weight == 0.7
+    assert loaded.settings.dataset_sources[1].format == "TradDraft"
+    assert loaded.settings.dataset_sources[1].user_group == "Top"
+    assert loaded.settings.dataset_sources[1].weight == 0.3
 

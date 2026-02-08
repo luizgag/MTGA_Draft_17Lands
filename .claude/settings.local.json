@@ -22,7 +22,23 @@
       "WebSearch",
       "WebFetch(domain:www.sciencedirect.com)",
       "WebFetch(domain:www.sbgames.org)",
-      "WebFetch(domain:mtghealth.org)"
+      "WebFetch(domain:mtghealth.org)",
+      "Bash(.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianConfig -v)",
+      "Bash(.venv/bin/pytest tests/test_archetype_openness.py::TestGetScoresReturnShape -v)",
+      "Bash(.venv/bin/pytest tests/ -v)",
+      "Bash(.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianBetaScoring -v)",
+      "Bash(.venv/bin/pytest tests/test_archetype_openness.py::TestEndToEnd::test_bayesian_with_real_data -v)",
+      "Bash(.venv/bin/pytest tests/)",
+      "WebFetch(domain:mtgazone.com)",
+      "WebFetch(domain:state-of-the-format.com)",
+      "WebFetch(domain:articles.starcitygames.com)",
+      "WebFetch(domain:lrcast.com)",
+      "WebFetch(domain:mtgds.wordpress.com)",
+      "WebFetch(domain:statisticaldrafting.com)",
+      "WebFetch(domain:creators.spotify.com)",
+      "WebFetch(domain:www.tcgplayer.com)",
+      "Bash(python3:*)",
+      "Bash(.venv/bin/pytest:*)"
     ]
   }
 }

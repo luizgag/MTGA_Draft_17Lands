@@ -80,6 +80,10 @@ class ArchetypeEditor:
         threshold_entry = ttk.Entry(detect_frame, textvariable=self.threshold_var, width=6)
         threshold_entry.pack(side=tkinter.LEFT, padx=4)
 
+        ttk.Label(detect_frame, text="Min Weight:").pack(side=tkinter.LEFT, padx=(8, 0))
+        self.card_weight_threshold_var = tkinter.StringVar(value=str(self.config.card_weight_threshold))
+        ttk.Entry(detect_frame, textvariable=self.card_weight_threshold_var, width=5).pack(side=tkinter.LEFT, padx=4)
+
         ttk.Button(detect_frame, text="Auto-Detect", command=self._auto_detect).pack(side=tkinter.LEFT, padx=4)
 
         # Archetype listbox
@@ -155,17 +159,42 @@ class ArchetypeEditor:
         bottom_frame = ttk.Frame(self.window)
         bottom_frame.pack(fill=tkinter.X, padx=4, pady=8)
 
-        ttk.Label(bottom_frame, text="Scoring:").pack(side=tkinter.LEFT)
-        self.scoring_var = tkinter.StringVar(value=self.config.scoring_method)
-        scoring_combo = ttk.Combobox(bottom_frame, textvariable=self.scoring_var,
-                                      values=["simple", "normalized"], width=12, state="readonly")
-        scoring_combo.pack(side=tkinter.LEFT, padx=4)
+        # Display name <-> internal value mapping
+        self._scoring_display_map = {
+            "Simple": "simple",
+            "Weighted": "normalized",
+            "Bayesian (%)": "bayesian_beta",
+        }
+        self._scoring_internal_map = {v: k for k, v in self._scoring_display_map.items()}
 
-        ttk.Label(bottom_frame, text="Curve:").pack(side=tkinter.LEFT, padx=(8, 0))
+        ttk.Label(bottom_frame, text="Scoring:").pack(side=tkinter.LEFT)
+        display_name = self._scoring_internal_map.get(self.config.scoring_method, "Simple")
+        self.scoring_var = tkinter.StringVar(value=display_name)
+        scoring_combo = ttk.Combobox(bottom_frame, textvariable=self.scoring_var,
+                                      values=list(self._scoring_display_map.keys()), width=12, state="readonly")
+        scoring_combo.pack(side=tkinter.LEFT, padx=4)
+        scoring_combo.bind("<<ComboboxSelected>>", self._on_scoring_change)
+
+        # Conditional fields frame
+        self.conditional_frame = ttk.Frame(bottom_frame)
+        self.conditional_frame.pack(side=tkinter.LEFT)
+
+        # Prior field (shown for Bayesian)
+        self.prior_frame = ttk.Frame(self.conditional_frame)
+        ttk.Label(self.prior_frame, text="Prior:").pack(side=tkinter.LEFT, padx=(8, 0))
+        self.prior_var = tkinter.StringVar(value=str(self.config.bayesian_prior))
+        ttk.Entry(self.prior_frame, textvariable=self.prior_var, width=5).pack(side=tkinter.LEFT, padx=2)
+
+        # Curve field (shown for Weighted)
+        self.curve_frame = ttk.Frame(self.conditional_frame)
+        ttk.Label(self.curve_frame, text="Curve:").pack(side=tkinter.LEFT, padx=(8, 0))
         self.weight_curve_var = tkinter.StringVar(value=self.config.weight_curve)
-        curve_combo = ttk.Combobox(bottom_frame, textvariable=self.weight_curve_var,
+        curve_combo = ttk.Combobox(self.curve_frame, textvariable=self.weight_curve_var,
                                     values=["linear", "sqrt", "squared"], width=8, state="readonly")
         curve_combo.pack(side=tkinter.LEFT, padx=4)
+
+        # Show correct conditional field on startup
+        self._on_scoring_change()
 
         ttk.Label(bottom_frame, text="Pack Weights:").pack(side=tkinter.LEFT, padx=(8, 0))
         self.pack_weight_vars = []
@@ -226,9 +255,16 @@ class ArchetypeEditor:
             messagebox.showerror("Error", "Threshold must be a number")
             return
 
-        archetypes = auto_detect_archetypes(self.dataset, threshold)
+        try:
+            card_weight_threshold = float(self.card_weight_threshold_var.get())
+        except ValueError:
+            card_weight_threshold = 0.4
+
+        archetypes = auto_detect_archetypes(self.dataset, threshold,
+                                            card_weight_threshold=card_weight_threshold)
         self.config.archetypes = archetypes
         self.config.detection_threshold = threshold
+        self.config.card_weight_threshold = card_weight_threshold
         self._refresh_archetype_list()
 
         # Auto-select the first archetype and show its cards
@@ -338,11 +374,30 @@ class ArchetypeEditor:
         if not arch.color_pair:
             messagebox.showinfo("Info", "Set a color pair to auto-calculate weights")
             return
-        arch.cards = calculate_card_weights(self.dataset, arch.color_pair)
+        try:
+            card_weight_threshold = float(self.card_weight_threshold_var.get())
+        except ValueError:
+            card_weight_threshold = 0.4
+        arch.cards = calculate_card_weights(self.dataset, arch.color_pair,
+                                            threshold=card_weight_threshold)
         arch.auto_weights = True
         self._dirty = True
         self._refresh_card_table(arch)
         self._refresh_archetype_list()
+
+    def _on_scoring_change(self, event=None):
+        """Show/hide conditional fields based on selected scoring method."""
+        display_name = self.scoring_var.get()
+        internal = self._scoring_display_map.get(display_name, "simple")
+
+        # Hide all conditional fields
+        self.prior_frame.pack_forget()
+        self.curve_frame.pack_forget()
+
+        if internal == "bayesian_beta":
+            self.prior_frame.pack(side=tkinter.LEFT)
+        elif internal == "normalized":
+            self.curve_frame.pack(side=tkinter.LEFT)
 
     def _save(self):
         """Save current config to file and update archetype names/settings from UI."""
@@ -355,8 +410,17 @@ class ArchetypeEditor:
             arch.auto_weights = self.auto_weights_var.get()
 
         # Update global settings
-        self.config.scoring_method = self.scoring_var.get()
+        display_name = self.scoring_var.get()
+        self.config.scoring_method = self._scoring_display_map.get(display_name, "simple")
         self.config.weight_curve = self.weight_curve_var.get()
+        try:
+            self.config.bayesian_prior = float(self.prior_var.get())
+        except ValueError:
+            self.config.bayesian_prior = 1.0
+        try:
+            self.config.card_weight_threshold = float(self.card_weight_threshold_var.get())
+        except ValueError:
+            self.config.card_weight_threshold = 0.4
         try:
             self.config.pack_weights = [float(v.get()) for v in self.pack_weight_vars]
         except ValueError:

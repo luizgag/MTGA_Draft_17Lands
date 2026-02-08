@@ -3,6 +3,7 @@ import tkinter
 from tkinter.ttk import Progressbar, Treeview, Style, OptionMenu, Button, Checkbutton, Label, Separator, Entry
 from tkinter import filedialog, messagebox, font
 from datetime import date, datetime, UTC
+import copy
 import urllib
 import sys
 import io
@@ -13,11 +14,11 @@ import os
 from os import stat, path
 from pynput.keyboard import Listener, KeyCode
 from PIL import Image, ImageTk, ImageFont
-from src.configuration import read_configuration, write_configuration, reset_configuration
+from src.configuration import read_configuration, write_configuration, reset_configuration, DatasetSource
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
-from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory
+from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets
 from src.utils import retrieve_local_set_list, open_file, clean_string, AutocompleteEntry
 from src import constants
 from src.logger import create_logger
@@ -1638,31 +1639,59 @@ class Overlay(ScaledWindow):
             widget.destroy()
 
         scores = self.openness_tracker.get_scores()
-        sorted_archetypes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        max_score = max(abs(s) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
-        if max_score == 0:
-            max_score = 1.0
+        sorted_archetypes = sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
+        scoring_method = self.openness_tracker.scoring_method
 
-        for i, (name, score) in enumerate(sorted_archetypes):
+        # Opacity map for confidence levels
+        opacity_map = {"none": 0.4, "low": 0.6, "medium": 0.8, "high": 1.0}
+
+        if scoring_method == "bayesian_beta":
+            max_score = 1.0  # P(open) is always 0-1
+        else:
+            max_score = max(abs(s["score"]) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
+            if max_score == 0:
+                max_score = 1.0
+
+        for i, (name, data) in enumerate(sorted_archetypes):
+            score = data["score"]
+            confidence = data.get("confidence", "high")
+            opacity = opacity_map.get(confidence, 1.0)
+
+            # Compute foreground color with opacity
+            fg_color = self._openness_fg_with_opacity(opacity)
+
             name_label = tkinter.Label(
                 self.openness_frame,
                 text=name,
                 anchor=tkinter.W,
                 width=15,
+                fg=fg_color,
             )
             name_label.grid(row=i, column=0, sticky="w", padx=(4, 2))
 
+            # Format score based on method
+            if scoring_method == "bayesian_beta":
+                score_text = f"{score * 100:.0f}%"
+            else:
+                score_text = f"{score:+.1f}"
+
             score_label = tkinter.Label(
                 self.openness_frame,
-                text=f"{score:+.1f}",
+                text=score_text,
                 anchor=tkinter.E,
                 width=6,
+                fg=fg_color,
             )
             score_label.grid(row=i, column=1, padx=2)
 
             # Visual bar
-            bar_width = int(abs(score) / max_score * 80) if max_score else 0
-            bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
+            if scoring_method == "bayesian_beta":
+                bar_width = int(score * 80)
+                bar_color = self._openness_bayesian_bar_color(score)
+            else:
+                bar_width = int(abs(score) / max_score * 80) if max_score else 0
+                bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
+
             bar_canvas = tkinter.Canvas(
                 self.openness_frame, width=80, height=12, highlightthickness=0
             )
@@ -1673,6 +1702,27 @@ class Overlay(ScaledWindow):
             self.__bind_openness_tooltip(name_label, name)
             self.__bind_openness_tooltip(score_label, name)
             self.__bind_openness_tooltip(bar_canvas, name)
+
+    @staticmethod
+    def _openness_fg_with_opacity(opacity: float) -> str:
+        """Compute a foreground color with the given opacity (0-1) against a dark background.
+
+        Blends white toward dark background. opacity=1.0 -> white, opacity=0.4 -> dim gray.
+        """
+        bg = 30  # dark background ~#1e1e1e
+        fg = 255  # white text
+        blended = int(bg + (fg - bg) * opacity)
+        return f"#{blended:02x}{blended:02x}{blended:02x}"
+
+    @staticmethod
+    def _openness_bayesian_bar_color(p_open: float) -> str:
+        """Color for Bayesian bar: green > 0.5, red < 0.5, gray at 0.5."""
+        if p_open > 0.55:
+            return "#4CAF50"
+        elif p_open < 0.45:
+            return "#F44336"
+        else:
+            return "#888888"
 
     def __bind_openness_tooltip(self, widget, archetype_name):
         """Bind hover tooltip showing top contributing cards for an archetype."""
@@ -1938,12 +1988,54 @@ class Overlay(ScaledWindow):
             set_separator = Separator(popup, orient='vertical')
             group_separator = Separator(popup, orient='vertical')
 
+            # --- Additional Sources UI ---
+            sources_frame = tkinter.LabelFrame(popup, text="Additional Data Sources (for merging)")
+            sources_listbox = tkinter.Listbox(sources_frame, height=3, selectmode=tkinter.SINGLE)
+            sources_listbox.pack(side=tkinter.LEFT, fill=tkinter.BOTH, expand=True, padx=2, pady=2)
+
+            sources_btn_frame = tkinter.Frame(sources_frame)
+            sources_btn_frame.pack(side=tkinter.RIGHT, fill=tkinter.Y, padx=2, pady=2)
+
+            def _refresh_sources_list():
+                sources_listbox.delete(0, tkinter.END)
+                for idx, src in enumerate(self.configuration.settings.dataset_sources):
+                    if idx == 0:
+                        continue  # First source comes from the main UI controls
+                    label = f"{src.format} | {src.user_group} | w={src.weight}"
+                    if src.start_date or src.end_date:
+                        label += f" | {src.start_date or '...'} to {src.end_date or '...'}"
+                    sources_listbox.insert(tkinter.END, label)
+
+            def _add_source():
+                self._open_source_editor(popup, None, _refresh_sources_list)
+
+            def _edit_source():
+                sel = sources_listbox.curselection()
+                if sel:
+                    source_idx = sel[0] + 1  # +1 because index 0 is the primary source
+                    self._open_source_editor(popup, source_idx, _refresh_sources_list)
+
+            def _remove_source():
+                sel = sources_listbox.curselection()
+                if sel:
+                    source_idx = sel[0] + 1
+                    if source_idx < len(self.configuration.settings.dataset_sources):
+                        self.configuration.settings.dataset_sources.pop(source_idx)
+                        write_configuration(self.configuration)
+                        _refresh_sources_list()
+
+            add_src_btn = tkinter.Button(sources_btn_frame, text="Add", command=_add_source)
+            add_src_btn.pack(fill=tkinter.X, pady=1)
+            edit_src_btn = tkinter.Button(sources_btn_frame, text="Edit", command=_edit_source)
+            edit_src_btn.pack(fill=tkinter.X, pady=1)
+            remove_src_btn = tkinter.Button(sources_btn_frame, text="Remove", command=_remove_source)
+            remove_src_btn.pack(fill=tkinter.X, pady=1)
+
+            _refresh_sources_list()
+
             notice_label.grid(row=0, column=0, columnspan=13, sticky='nsew')
             list_box_frame.grid(row=1, column=0, columnspan=13, sticky='nsew')
-            add_button.grid(row=3, column=0, columnspan=13, sticky='nsew')
-            progress.grid(row=4, column=0, columnspan=13, sticky='nsew')
-            status_label.grid(row=5, column=0, columnspan=13, sticky='nsew')
-            
+
             set_label.grid(row=2, column=0, sticky='nsew')
             set_entry.grid(row=2, column=1, sticky='nsew')
             set_separator.grid(row=2, column=2, sticky='nsew')
@@ -1957,6 +2049,11 @@ class Overlay(ScaledWindow):
             start_entry.grid(row=2, column=10, sticky='nsew')
             end_label.grid(row=2, column=11, sticky='nsew')
             end_entry.grid(row=2, column=12, sticky='nsew')
+
+            sources_frame.grid(row=3, column=0, columnspan=13, sticky='nsew', padx=5, pady=2)
+            add_button.grid(row=4, column=0, columnspan=13, sticky='nsew')
+            progress.grid(row=5, column=0, columnspan=13, sticky='nsew')
+            status_label.grid(row=6, column=0, columnspan=13, sticky='nsew')
 
             list_box.pack(expand=True, fill="both")
 
@@ -2986,6 +3083,54 @@ class Overlay(ScaledWindow):
                 if not result:
                     break
 
+                # Multi-source merge: download additional sources and merge
+                additional_sources = [
+                    s for s in self.configuration.settings.dataset_sources
+                    if s.weight > 0
+                ]
+                if len(additional_sources) > 1:
+                    primary_data = copy.deepcopy(self.extractor.combined_data)
+                    all_datasets = [primary_data]
+                    all_weights = [additional_sources[0].weight]
+
+                    for idx, source in enumerate(additional_sources[1:], start=2):
+                        status.set(f"Downloading Source {idx}/{len(additional_sources)}")
+                        popup.update()
+
+                        self.extractor.clear_data()
+                        self.extractor.select_sets(sets[draft_set.get()])
+                        self.extractor.set_draft_type(source.format)
+                        if source.start_date:
+                            self.extractor.set_start_date(source.start_date)
+                        else:
+                            self.extractor.set_start_date(start.get())
+                        if source.end_date:
+                            self.extractor.set_end_date(source.end_date)
+                        else:
+                            self.extractor.set_end_date(end.get())
+                        self.extractor.set_user_group(source.user_group)
+                        self.extractor.set_version(version)
+
+                        self.extractor.retrieve_17lands_color_ratings()
+                        src_result, src_string, _ = self.extractor.download_card_data(
+                            popup, progress, status, self.configuration.card_data.database_size)
+
+                        if src_result:
+                            all_datasets.append(copy.deepcopy(self.extractor.combined_data))
+                            all_weights.append(source.weight)
+                        else:
+                            logger.error("Additional source %d failed: %s", idx, src_string)
+
+                    if len(all_datasets) > 1:
+                        status.set("Merging Datasets")
+                        popup.update()
+                        merged = merge_datasets(all_datasets, all_weights)
+                        self.extractor.combined_data = merged
+
+                    # Restore primary extractor state for export
+                    self.extractor.set_draft_type(draft.get())
+                    self.extractor.set_user_group(user_group.get())
+
                 if not self.extractor.export_card_data():
                     result = False
                     result_string = "File Write Failure"
@@ -3019,6 +3164,73 @@ class Overlay(ScaledWindow):
             write_configuration(self.configuration)
         popup.update()
         return
+
+    def _open_source_editor(self, parent, source_idx, on_save_callback):
+        """Open a small dialog to add or edit a DatasetSource."""
+        editing = source_idx is not None
+        if editing:
+            source = self.configuration.settings.dataset_sources[source_idx]
+        else:
+            source = DatasetSource()
+
+        dialog = tkinter.Toplevel(parent)
+        dialog.wm_title("Edit Source" if editing else "Add Source")
+        dialog.attributes("-topmost", True)
+        dialog.resizable(width=False, height=False)
+
+        row = 0
+        tkinter.Label(dialog, text="Format:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        format_var = tkinter.StringVar(value=source.format)
+        format_menu = tkinter.OptionMenu(dialog, format_var, *constants.LIMITED_TYPE_LIST)
+        format_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="User Group:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        group_var = tkinter.StringVar(value=source.user_group)
+        group_menu = tkinter.OptionMenu(dialog, group_var, *constants.LIMITED_GROUPS_LIST)
+        group_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="Start Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        start_entry = tkinter.Entry(dialog)
+        start_entry.insert(0, source.start_date)
+        start_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="End Date:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        end_entry = tkinter.Entry(dialog)
+        end_entry.insert(0, source.end_date)
+        end_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+        tkinter.Label(dialog, text="Weight:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        weight_entry = tkinter.Entry(dialog)
+        weight_entry.insert(0, str(source.weight))
+        weight_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        row += 1
+
+        def _save():
+            try:
+                weight = float(weight_entry.get())
+            except ValueError:
+                weight = 1.0
+            new_source = DatasetSource(
+                format=format_var.get(),
+                user_group=group_var.get(),
+                start_date=start_entry.get().strip(),
+                end_date=end_entry.get().strip(),
+                weight=weight,
+            )
+            if editing:
+                self.configuration.settings.dataset_sources[source_idx] = new_source
+            else:
+                self.configuration.settings.dataset_sources.append(new_source)
+            write_configuration(self.configuration)
+            on_save_callback()
+            dialog.destroy()
+
+        tkinter.Button(dialog, text="Save", command=_save).grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=4)
 
     def __update_set_table(self, list_box, sets):
         '''Updates the set list in the Set View table'''
