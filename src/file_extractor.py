@@ -173,6 +173,9 @@ def _merge_deck_colors(sources):
                     check_field = count_field if count_field else constants.DATA_FIELD_NGP
                     if stats.get(check_field, 0) == 0:
                         continue
+                    # For win rate fields, skip if the rate is 0.0 (suppressed/insufficient data from 17Lands)
+                    if count_field is not None and stats[field] == 0.0:
+                        continue
                     total_weighted += stats[field] * w
                     total_weight += w
                 if total_weight > 0:

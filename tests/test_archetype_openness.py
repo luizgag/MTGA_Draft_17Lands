@@ -549,13 +549,15 @@ class TestBayesianBetaScoring:
         assert scores["BG Elves"]["score"] > 0.5
 
     def test_negative_signal_decreases_probability(self):
-        """Card seen at/before ATA -> opportunity cost pushes P(open) < 0.5.
+        """Missing card with low ATA at pick 9+ pushes P(open) < 0.5.
 
-        pick=3, ata=7: not wheeling -> beta += 0.1 * 0.9 * 1.0 = 0.09
-        alpha = 1.0, beta = 1.09 -> P = 1.0/2.09 ≈ 0.4785
+        Missing Elf Lord: ata=3.0, pick=9 -> (3-9)/(3+9) = -0.5
+        signal = -0.5 * 0.9 * 1.0 = -0.45 -> beta += 0.45
+        alpha = 1.0, beta = 1.45 -> P = 1.0/2.45 ≈ 0.408
         """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
-        tracker.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
+        missing = [_make_card("Elf Lord", ata=3.0)]
+        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
         scores = tracker.get_scores()
         assert scores["BG Elves"]["score"] < 0.5
 
@@ -563,51 +565,53 @@ class TestBayesianBetaScoring:
         """Verify exact alpha/beta math for a known signal.
 
         Elf Lord: ata=3.0, pick=7, card_weight=0.9
-        raw_signal = (7-3)/3 * 0.9 * 1.0 = 1.2 (positive)
-        alpha = 1.0 + 1.2 = 2.2
+        raw_signal = (7-3)/(7+3) * 0.9 * 1.0 = 0.4 * 0.9 = 0.36 (positive)
+        alpha = 1.0 + 0.36 = 1.36
         beta = 1.0
-        P(open) = 2.2 / (2.2 + 1.0) = 0.6875
+        P(open) = 1.36 / (1.36 + 1.0) = 0.5763
         """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(2.2 / 3.2, abs=0.001)
+        assert scores["BG Elves"]["score"] == pytest.approx(1.36 / 2.36, abs=0.001)
 
     def test_card_weight_affects_magnitude(self):
         """Higher card_weight -> stronger push on posterior.
 
         Murder in BG Elves has weight=0.2, in UB Control has weight=0.7.
         Same signal (pick=8, ata=4) should push UB Control more.
-        raw = (8-4)/4 = 1.0
-        BG: alpha = 1.0 + 1.0*0.2 = 1.2, beta = 1.0 -> P = 1.2/2.2 = 0.5455
-        UB: alpha = 1.0 + 1.0*0.7 = 1.7, beta = 1.0 -> P = 1.7/2.7 = 0.6296
+        raw = (8-4)/(8+4) = 4/12 = 0.3333
+        BG: alpha = 1.0 + 0.3333*0.2 = 1.0667, beta = 1.0 -> P = 1.0667/2.0667
+        UB: alpha = 1.0 + 0.3333*0.7 = 1.2333, beta = 1.0 -> P = 1.2333/2.2333
         """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
         tracker.record_pack([_make_card("Murder", ata=4.0)], pick_number=8, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(1.2 / 2.2, abs=0.001)
-        assert scores["UB Control"]["score"] == pytest.approx(1.7 / 2.7, abs=0.001)
+        bg_signal = (4.0 / 12.0) * 0.2
+        ub_signal = (4.0 / 12.0) * 0.7
+        assert scores["BG Elves"]["score"] == pytest.approx((1.0 + bg_signal) / (2.0 + bg_signal), abs=0.001)
+        assert scores["UB Control"]["score"] == pytest.approx((1.0 + ub_signal) / (2.0 + ub_signal), abs=0.001)
 
     def test_mixed_signals_intermediate(self):
-        """Positive then opportunity-cost signals produce an intermediate value.
+        """Positive signal from seen card + negative signal from missing card.
 
-        Elf Lord pick=7 ata=3 -> wheeling, raw=(7-3)/3*0.9=1.2 -> alpha += 1.2
-        Elf Lord pick=2 ata=5 -> not wheeling, opportunity cost=0.1*0.9*1.0=0.09 -> beta += 0.09
-        alpha = 1.0 + 1.2 = 2.2, beta = 1.0 + 0.09 = 1.09
-        P = 2.2 / 3.29 = 0.6687
+        Elf Lord pick=9 ata=3 -> wheeling, raw=(9-3)/(9+3)*0.9 = 0.5*0.9 = 0.45 -> alpha += 0.45
+        Missing Elf Lord pick=9 ata=3 -> (3-9)/(3+9)*0.9 = -0.5*0.9 = -0.45 -> beta += 0.45
+        alpha = 1.0 + 0.45 = 1.45, beta = 1.0 + 0.45 = 1.45
+        P = 1.45 / 2.9 = 0.5  (signals cancel out)
         """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
-        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
-        tracker.record_pack([_make_card("Elf Lord", ata=5.0)], pick_number=2, pack_number=0)
+        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=9, pack_number=0,
+                            missing_cards=[_make_card("Elf Lord", ata=3.0)])
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(2.2 / 3.29, abs=0.001)
+        assert scores["BG Elves"]["score"] == pytest.approx(0.5, abs=0.001)
 
     def test_pack_weight_scales_signal(self):
         """Pack weight multiplies the signal contribution.
 
         Same card/pick but pack_weight=0.5 halves the contribution.
-        Elf Lord pick=7 ata=3 -> raw = (7-3)/3 * 0.9 * 0.5 = 0.6
-        alpha = 1.0 + 0.6 = 1.6, beta = 1.0 -> P = 1.6/2.6 = 0.6154
+        Elf Lord pick=7 ata=3 -> raw = (7-3)/(7+3) * 0.9 * 0.5 = 0.4 * 0.9 * 0.5 = 0.18
+        alpha = 1.0 + 0.18 = 1.18, beta = 1.0 -> P = 1.18/2.18
         """
         config = ArchetypeConfig(
             set_code="TST",
@@ -619,15 +623,16 @@ class TestBayesianBetaScoring:
         tracker = OpennessTracker(config)
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=1)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(1.6 / 2.6, abs=0.001)
+        signal = (4.0 / 10.0) * 0.9 * 0.5
+        assert scores["BG Elves"]["score"] == pytest.approx((1.0 + signal) / (2.0 + signal), abs=0.001)
 
     def test_prior_parameter_effect(self):
         """Larger prior pulls P(open) closer to 0.5.
 
         prior=5.0, same signal as test_exact:
-        raw = (7-3)/3 * 0.9 = 1.2
-        alpha = 5.0 + 1.2 = 6.2, beta = 5.0
-        P = 6.2 / 11.2 = 0.5536  (closer to 0.5 than with prior=1.0)
+        raw = (7-3)/(7+3) * 0.9 = 0.4 * 0.9 = 0.36
+        alpha = 5.0 + 0.36 = 5.36, beta = 5.0
+        P = 5.36 / 10.36 = 0.5174  (closer to 0.5 than with prior=1.0)
         """
         config = ArchetypeConfig(
             set_code="TST",
@@ -638,7 +643,7 @@ class TestBayesianBetaScoring:
         tracker = OpennessTracker(config)
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(6.2 / 11.2, abs=0.001)
+        assert scores["BG Elves"]["score"] == pytest.approx(5.36 / 10.36, abs=0.001)
 
     def test_confidence_level_none(self):
         """Zero signals -> confidence 'none'."""
@@ -702,34 +707,69 @@ class TestBayesianBetaScoring:
         assert width_late < width_early
 
 
-    def test_opportunity_cost_decay_configurable(self):
-        """Larger decay constant produces stronger downward pressure.
+    def test_missing_card_negative_signal(self):
+        """Missing card with low ATA produces negative signal.
 
-        Default decay=0.1: beta += 0.1 * 0.9 = 0.09 -> P = 1.0/2.09 ≈ 0.4785
-        Custom decay=0.2: beta += 0.2 * 0.9 = 0.18 -> P = 1.0/2.18 ≈ 0.4587
+        Missing Elf Lord: ata=3.0, pick=9 -> (3-9)/(3+9) = -0.5
+        signal = -0.5 * 0.9 * 1.0 = -0.45 -> beta += 0.45
+        alpha = 1.0, beta = 1.45 -> P = 1.0/2.45 ≈ 0.408
         """
-        # Default decay (0.1)
-        tracker_default = OpennessTracker(BAYESIAN_CONFIG)
-        tracker_default.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
-        score_default = tracker_default.get_scores()["BG Elves"]["score"]
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        missing = [_make_card("Elf Lord", ata=3.0)]
+        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
+        scores = tracker.get_scores()
+        expected = 1.0 / (2.0 + 0.5 * 0.9)
+        assert scores["BG Elves"]["score"] == pytest.approx(expected, abs=0.001)
 
-        # Higher decay (0.2)
-        config_high_decay = ArchetypeConfig(
-            set_code="TST",
-            scoring_method="bayesian_beta",
-            bayesian_prior=1.0,
-            opportunity_cost_decay=0.2,
-            archetypes=[Archetype(name="BG Elves", cards={"Elf Lord": 0.9})],
-        )
-        tracker_high = OpennessTracker(config_high_decay)
-        tracker_high.record_pack([_make_card("Elf Lord", ata=7.0)], pick_number=3, pack_number=0)
-        score_high = tracker_high.get_scores()["BG Elves"]["score"]
+    def test_missing_card_positive_ignored(self):
+        """Missing card with high ATA (ata > pick) produces no signal.
 
-        # Higher decay -> lower P(open)
-        assert score_high < score_default < 0.5
+        Missing Elf Lord: ata=12.0, pick=9 -> (12-9)/(12+9) = +0.143 -> discarded
+        """
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        missing = [_make_card("Elf Lord", ata=12.0)]
+        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
+
+    def test_missing_cards_only_from_pick_9(self):
+        """Missing cards before pick 9 produce no signal."""
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        missing = [_make_card("Elf Lord", ata=3.0)]
+        tracker.record_pack([], pick_number=8, pack_number=0, missing_cards=missing)
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
+
+    def test_seen_card_no_negative_signal(self):
+        """Card seen before ATA produces no signal (not negative)."""
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        tracker.record_pack([_make_card("Elf Lord", ata=9.0)], pick_number=5, pack_number=0)
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
+
+    def test_new_positive_formula_dampened(self):
+        """New formula (pick-ata)/(pick+ata) produces smaller signals than old (pick-ata)/ata.
+
+        ATA 2, pick 12: new = (12-2)/(12+2) = 0.714, old = (12-2)/2 = 5.0
+        """
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        tracker.record_pack([_make_card("Elf Lord", ata=2.0)], pick_number=12, pack_number=0)
+        scores = tracker.get_scores()
+        signal = (10.0 / 14.0) * 0.9  # ≈ 0.643
+        expected = (1.0 + signal) / (2.0 + signal)
+        assert scores["BG Elves"]["score"] == pytest.approx(expected, abs=0.001)
+        # Signal < 1.0 (dampened), old formula would give 5.0 * 0.9 = 4.5
+        assert signal < 1.0
+
+    def test_missing_cards_none_default(self):
+        """Passing no missing_cards works (backward compat)."""
+        tracker = OpennessTracker(BAYESIAN_CONFIG)
+        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] > 0.5
 
     def test_config_default_opportunity_cost_decay(self):
-        """Config without opportunity_cost_decay field gets default 0.1."""
+        """Config without opportunity_cost_decay field gets default 0.1 (backward compat)."""
         data = {"set_code": "TST", "scoring_method": "bayesian_beta"}
         config = ArchetypeConfig.model_validate(data)
         assert config.opportunity_cost_decay == 0.1
@@ -739,14 +779,16 @@ class TestATANormalization:
     """Tests for ATA-normalized signal in Bayesian/Simple paths."""
 
     def test_low_ata_card_produces_stronger_signal(self):
-        """ATA-3 card at pick 8 should produce stronger signal than ATA-8 card at pick 13."""
+        """ATA-3 card at pick 8 should produce stronger signal than ATA-8 card at pick 13.
+
+        ATA 3 at pick 8: (8-3)/(8+3) * 0.9 = 0.4545 * 0.9 = 0.409
+        ATA 8 at pick 13: (13-8)/(13+8) * 0.9 = 0.2381 * 0.9 = 0.214
+        """
         tracker = OpennessTracker(BAYESIAN_CONFIG)
-        # ATA 3 at pick 8: (8-3)/3 * 0.9 = 1.5 -> alpha = 2.5
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=8, pack_number=0)
         score_low_ata = tracker.get_scores()["BG Elves"]["score"]
 
         tracker.reset()
-        # ATA 8 at pick 13: (13-8)/8 * 0.9 = 0.5625 -> alpha = 1.5625
         tracker.record_pack([_make_card("Elf Lord", ata=8.0)], pick_number=13, pack_number=0)
         score_high_ata = tracker.get_scores()["BG Elves"]["score"]
 

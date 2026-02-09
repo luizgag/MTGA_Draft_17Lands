@@ -515,6 +515,43 @@ class TestMergeDatasets:
         assert ad[constants.DATA_FIELD_GIH] == 500
         assert result["color_ratings"]["WU"] == pytest.approx(52.0)
 
+    def test_merge_zero_rate_nonzero_count_excluded(self):
+        """Win rate of 0.0 with nonzero count is treated as 'no data' (suppressed by 17Lands API)."""
+        stats_premier = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0,
+                               ngp=5000, ngoh=2000, gih=3000, ngnd=1000, ngd=2000)
+        stats_trad = _stats(gihwr=0.0, ohwr=0.0, gpwr=0.0, gnswr=0.0, gdwr=0.0,
+                            ngp=200, ngoh=80, gih=12, ngnd=50, ngd=40)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_premier))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_trad))})
+
+        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        # All win rate fields should come entirely from source A (source B has 0.0 = suppressed)
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(50.0, abs=0.1)
+        assert ad[constants.DATA_FIELD_OHWR] == pytest.approx(48.0, abs=0.1)
+        assert ad[constants.DATA_FIELD_GPWR] == pytest.approx(52.0, abs=0.1)
+        assert ad[constants.DATA_FIELD_GNSWR] == pytest.approx(46.0, abs=0.1)
+        assert ad[constants.DATA_FIELD_GDWR] == pytest.approx(54.0, abs=0.1)
+        # Count fields are still summed
+        assert ad[constants.DATA_FIELD_NGP] == 5200
+        assert ad[constants.DATA_FIELD_GIH] == 3012
+
+    def test_merge_both_sources_nonzero_rates(self):
+        """Both sources have real win rate data — normal weighted average."""
+        stats_a = _stats(gihwr=50.0, ohwr=48.0, ngp=5000, ngoh=2000, gih=3000)
+        stats_b = _stats(gihwr=60.0, ohwr=58.0, ngp=1000, ngoh=400, gih=600)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b], [0.7, 0.3])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        # Both sources contribute: (50.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3) = 53.0
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(53.0, abs=0.1)
+        # (48.0 * 0.7 + 58.0 * 0.3) / (0.7 + 0.3) = 51.0
+        assert ad[constants.DATA_FIELD_OHWR] == pytest.approx(51.0, abs=0.1)
+
 
 @patch("src.file_extractor.os.remove")
 @patch("src.file_extractor.os.listdir")
