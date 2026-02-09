@@ -548,19 +548,6 @@ class TestBayesianBetaScoring:
         scores = tracker.get_scores()
         assert scores["BG Elves"]["score"] > 0.5
 
-    def test_negative_signal_decreases_probability(self):
-        """Missing card with low ATA at pick 9+ pushes P(open) < 0.5.
-
-        Missing Elf Lord: ata=3.0, pick=9 -> (3-9)/(3+9) = -0.5
-        signal = -0.5 * 0.9 * 1.0 = -0.45 -> beta += 0.45
-        alpha = 1.0, beta = 1.45 -> P = 1.0/2.45 ≈ 0.408
-        """
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        missing = [_make_card("Elf Lord", ata=3.0)]
-        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
-        scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] < 0.5
-
     def test_exact_posterior_calculation(self):
         """Verify exact alpha/beta math for a known signal.
 
@@ -591,20 +578,6 @@ class TestBayesianBetaScoring:
         ub_signal = (4.0 / 12.0) * 0.7
         assert scores["BG Elves"]["score"] == pytest.approx((1.0 + bg_signal) / (2.0 + bg_signal), abs=0.001)
         assert scores["UB Control"]["score"] == pytest.approx((1.0 + ub_signal) / (2.0 + ub_signal), abs=0.001)
-
-    def test_mixed_signals_intermediate(self):
-        """Positive signal from seen card + negative signal from missing card.
-
-        Elf Lord pick=9 ata=3 -> wheeling, raw=(9-3)/(9+3)*0.9 = 0.5*0.9 = 0.45 -> alpha += 0.45
-        Missing Elf Lord pick=9 ata=3 -> (3-9)/(3+9)*0.9 = -0.5*0.9 = -0.45 -> beta += 0.45
-        alpha = 1.0 + 0.45 = 1.45, beta = 1.0 + 0.45 = 1.45
-        P = 1.45 / 2.9 = 0.5  (signals cancel out)
-        """
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=9, pack_number=0,
-                            missing_cards=[_make_card("Elf Lord", ata=3.0)])
-        scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(0.5, abs=0.001)
 
     def test_pack_weight_scales_signal(self):
         """Pack weight multiplies the signal contribution.
@@ -707,39 +680,6 @@ class TestBayesianBetaScoring:
         assert width_late < width_early
 
 
-    def test_missing_card_negative_signal(self):
-        """Missing card with low ATA produces negative signal.
-
-        Missing Elf Lord: ata=3.0, pick=9 -> (3-9)/(3+9) = -0.5
-        signal = -0.5 * 0.9 * 1.0 = -0.45 -> beta += 0.45
-        alpha = 1.0, beta = 1.45 -> P = 1.0/2.45 ≈ 0.408
-        """
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        missing = [_make_card("Elf Lord", ata=3.0)]
-        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
-        scores = tracker.get_scores()
-        expected = 1.0 / (2.0 + 0.5 * 0.9)
-        assert scores["BG Elves"]["score"] == pytest.approx(expected, abs=0.001)
-
-    def test_missing_card_positive_ignored(self):
-        """Missing card with high ATA (ata > pick) produces no signal.
-
-        Missing Elf Lord: ata=12.0, pick=9 -> (12-9)/(12+9) = +0.143 -> discarded
-        """
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        missing = [_make_card("Elf Lord", ata=12.0)]
-        tracker.record_pack([], pick_number=9, pack_number=0, missing_cards=missing)
-        scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
-
-    def test_missing_cards_only_from_pick_9(self):
-        """Missing cards before pick 9 produce no signal."""
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        missing = [_make_card("Elf Lord", ata=3.0)]
-        tracker.record_pack([], pick_number=8, pack_number=0, missing_cards=missing)
-        scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
-
     def test_seen_card_no_negative_signal(self):
         """Card seen before ATA produces no signal (not negative)."""
         tracker = OpennessTracker(BAYESIAN_CONFIG)
@@ -760,13 +700,6 @@ class TestBayesianBetaScoring:
         assert scores["BG Elves"]["score"] == pytest.approx(expected, abs=0.001)
         # Signal < 1.0 (dampened), old formula would give 5.0 * 0.9 = 4.5
         assert signal < 1.0
-
-    def test_missing_cards_none_default(self):
-        """Passing no missing_cards works (backward compat)."""
-        tracker = OpennessTracker(BAYESIAN_CONFIG)
-        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
-        scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] > 0.5
 
     def test_config_default_opportunity_cost_decay(self):
         """Config without opportunity_cost_decay field gets default 0.1 (backward compat)."""

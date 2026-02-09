@@ -67,8 +67,6 @@ from src.constants import (
     COLOR_NAMES_DICT,
 )
 
-MISSING_CARD_START_PICK = 9
-
 
 def _get_all_card_ratings(dataset) -> Dict:
     """Access the internal card_ratings dict from a Dataset."""
@@ -155,18 +153,15 @@ class OpennessTracker:
         self.bayesian_prior = config.bayesian_prior
         self.signals: List[Dict] = []
 
-    def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int,
-                     missing_cards: List[Dict] = None) -> None:
-        """Record signals from a pack of cards.
+    def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
+        """Record positive signals from a pack of cards.
 
         Positive signal = card is wheeling later than expected (archetype is OPEN).
-        Negative signal = card was taken by others (archetype is CLOSED).
 
         Args:
             pack_cards: list of card dicts from the dataset (cards still in pack)
             pick_number: 1-based pick position within the pack (resets each pack)
             pack_number: 0-indexed pack number (0=pack1, 1=pack2, 2=pack3)
-            missing_cards: list of card dicts taken by other drafters (for negative signals)
         """
         if pick_number <= 1:
             return
@@ -214,38 +209,6 @@ class OpennessTracker:
                     "ata": ata,
                     "signal": signal,
                 })
-
-        # Missing cards: negative signals from cards taken by others (bayesian_beta only)
-        if (self.scoring_method == "bayesian_beta"
-                and missing_cards
-                and pick_number >= MISSING_CARD_START_PICK):
-            for card in missing_cards:
-                card_name = card.get(DATA_FIELD_NAME, "")
-                deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
-                all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
-                ata = all_decks.get(DATA_FIELD_ATA, 0.0)
-
-                for archetype in self.archetypes:
-                    if card_name not in archetype.cards:
-                        continue
-
-                    card_weight = archetype.cards[card_name]
-
-                    if ata == 0.0:
-                        continue
-
-                    raw_signal = (ata - pick_number) / (ata + pick_number)
-                    if raw_signal >= 0:
-                        continue  # Only keep negative signals from missing cards
-
-                    signal = raw_signal * card_weight * pack_weight
-                    self.signals.append({
-                        "archetype": archetype.name,
-                        "card_name": card_name,
-                        "pick_number": pick_number,
-                        "ata": ata,
-                        "signal": signal,
-                    })
 
     def _pick_weight(self, pick_number: int, max_picks: int = 14) -> float:
         """Weight from 0.0 (pick 1) to 1.0 (final pick), shaped by weight_curve."""
