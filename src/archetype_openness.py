@@ -30,12 +30,12 @@ class ArchetypeConfig(BaseModel):
     hmm_transition_decay: float = 0.15
     hmm_emission_scale: float = 1.0
     rarity_odds: Dict[str, float] = Field(default_factory=lambda: {
-        "common": 0.85,
-        "uncommon": 0.60,
-        "rare": 0.35,
-        "mythic": 0.20,
-        "special": 0.25,
-        "bonus": 0.25,
+        "common": 0.0899,
+        "uncommon": 0.0388,
+        "rare": 0.0148,
+        "mythic": 0.0055,
+        "special": 0.0001,
+        "bonus": 0.0001,
     })
     card_weight_threshold: float = 0.4
     archetypes: List[Archetype] = Field(default_factory=list)
