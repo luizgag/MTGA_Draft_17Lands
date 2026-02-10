@@ -1645,8 +1645,8 @@ class Overlay(ScaledWindow):
         # Opacity map for confidence levels
         opacity_map = {"none": 0.4, "low": 0.6, "medium": 0.8, "high": 1.0}
 
-        if scoring_method == "bayesian_beta":
-            max_score = 1.0  # P(open) is always 0-1
+        if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
+            max_score = 1.0  # P(open) style methods are always 0-1
         else:
             max_score = max(abs(s["score"]) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
             if max_score == 0:
@@ -1670,7 +1670,7 @@ class Overlay(ScaledWindow):
             name_label.grid(row=i, column=0, sticky="w", padx=(4, 2))
 
             # Format score based on method
-            if scoring_method == "bayesian_beta":
+            if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
                 score_text = f"{score * 100:.0f}%"
             else:
                 score_text = f"{score:+.1f}"
@@ -1685,7 +1685,7 @@ class Overlay(ScaledWindow):
             score_label.grid(row=i, column=1, padx=2)
 
             # Visual bar
-            if scoring_method == "bayesian_beta":
+            if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
                 bar_width = int(score * 80)
                 bar_color = self._openness_bayesian_bar_color(score)
             else:
