@@ -271,6 +271,79 @@ class TestOpennessTrackerNormalized:
         assert scores["Test"]["score"] == 0.0
 
 
+
+
+class TestOpennessTrackerHMMHybrid:
+    """Tests for HMM hybrid scoring method."""
+
+    def test_hmm_returns_probability(self):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="BG Elves", cards={"Elf Lord": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=8, pack_number=0)
+        score = tracker.get_scores()["BG Elves"]["score"]
+        assert 0.0 <= score <= 1.0
+        assert score > 0.5
+
+    def test_hmm_rarity_effect(self):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Common Card": 1.0, "Rare Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+
+        common = _make_card("Common Card", ata=8.0)
+        common["rarity"] = "common"
+        rare = _make_card("Rare Card", ata=8.0)
+        rare["rarity"] = "rare"
+
+        tracker.record_pack([common], pick_number=11, pack_number=0)
+        score_common = tracker.get_scores()["Test"]["score"]
+
+        tracker.reset()
+        tracker.record_pack([rare], pick_number=11, pack_number=0)
+        score_rare = tracker.get_scores()["Test"]["score"]
+
+        assert score_common > score_rare
+
+    def test_hmm_uses_configured_rarity_odds(self):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            rarity_odds={"common": 0.20, "rare": 0.90},
+            archetypes=[Archetype(name="Test", cards={"Common Card": 1.0, "Rare Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+
+        common = _make_card("Common Card", ata=8.0)
+        common["rarity"] = "common"
+        rare = _make_card("Rare Card", ata=8.0)
+        rare["rarity"] = "rare"
+
+        tracker.record_pack([common], pick_number=11, pack_number=0)
+        score_common = tracker.get_scores()["Test"]["score"]
+
+        tracker.reset()
+        tracker.record_pack([rare], pick_number=11, pack_number=0)
+        score_rare = tracker.get_scores()["Test"]["score"]
+
+        assert score_rare > score_common
+
+    def test_hmm_reset_resets_state(self):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="BG Elves", cards={"Elf Lord": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=8, pack_number=0)
+        tracker.reset()
+        assert tracker.get_scores()["BG Elves"]["score"] == pytest.approx(0.5)
+
 class TestTopContributors:
     """Tests for get_top_contributors."""
 
@@ -500,6 +573,30 @@ class TestBayesianConfig:
         data = {"set_code": "TST", "scoring_method": "simple"}
         config = ArchetypeConfig.model_validate(data)
         assert config.bayesian_prior == 1.0
+
+
+class TestRarityOddsConfig:
+    """Tests for per-set rarity odds configuration used by HMM hybrid."""
+
+    def test_default_rarity_odds(self):
+        config = ArchetypeConfig(set_code="TST")
+        assert config.rarity_odds["common"] == pytest.approx(0.85)
+        assert config.rarity_odds["mythic"] == pytest.approx(0.20)
+
+    def test_old_config_without_rarity_odds_gets_default(self):
+        data = {"set_code": "TST", "scoring_method": "hmm_hybrid"}
+        config = ArchetypeConfig.model_validate(data)
+        assert config.rarity_odds["uncommon"] == pytest.approx(0.60)
+
+    def test_rarity_odds_round_trip(self, tmp_path):
+        config = ArchetypeConfig(
+            set_code="TST",
+            rarity_odds={"common": 0.70, "uncommon": 0.50, "rare": 0.40, "mythic": 0.25},
+        )
+        file_path = str(tmp_path / "test_config.json")
+        save_archetype_config(config, file_path)
+        loaded = load_archetype_config(file_path)
+        assert loaded.rarity_odds["common"] == pytest.approx(0.70)
 
 
 BAYESIAN_CONFIG = ArchetypeConfig(

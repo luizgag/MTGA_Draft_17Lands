@@ -27,6 +27,16 @@ class ArchetypeConfig(BaseModel):
     pack_weights: List[float] = Field(default_factory=lambda: [1.0, 1.0, 1.0])
     bayesian_prior: float = 1.0
     opportunity_cost_decay: float = 0.1
+    hmm_transition_decay: float = 0.15
+    hmm_emission_scale: float = 1.0
+    rarity_odds: Dict[str, float] = Field(default_factory=lambda: {
+        "common": 0.85,
+        "uncommon": 0.60,
+        "rare": 0.35,
+        "mythic": 0.20,
+        "special": 0.25,
+        "bonus": 0.25,
+    })
     card_weight_threshold: float = 0.4
     archetypes: List[Archetype] = Field(default_factory=list)
 
@@ -152,6 +162,8 @@ class OpennessTracker:
         self.archetypes = config.archetypes
         self.bayesian_prior = config.bayesian_prior
         self.signals: List[Dict] = []
+        self.hmm_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        self.hmm_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -196,6 +208,10 @@ class OpennessTracker:
                     else:
                         # Card seen at/before ATA -> no signal from seen cards
                         continue
+                elif self.scoring_method == "hmm_hybrid":
+                    emission = self._hmm_emission(card, pick_number, ata, card_weight, pack_weight)
+                    self._hmm_update_state(archetype.name, pick_number, emission)
+                    signal = emission
                 else:  # simple
                     if ata == 0.0:
                         continue
@@ -245,7 +261,60 @@ class OpennessTracker:
         """
         if self.scoring_method == "bayesian_beta":
             return self._scores_bayesian_beta()
+        if self.scoring_method == "hmm_hybrid":
+            return self._scores_hmm_hybrid()
         return self._scores_simple()
+
+    def _rarity_appearance_prior(self, rarity: str) -> float:
+        """Approximate per-set probability a card appears in observed packs by rarity."""
+        rarity_key = (rarity or "").lower()
+        configured = self.config.rarity_odds.get(rarity_key)
+        if configured is None:
+            return 0.50
+        return max(0.0, min(1.0, configured))
+
+    def _hmm_emission(self, card: Dict, pick_number: int, ata: float,
+                      card_weight: float, pack_weight: float) -> float:
+        """Emission contribution to log-odds from one visible card."""
+        if ata <= 0.0:
+            return 0.0
+
+        rarity_prior = self._rarity_appearance_prior(card.get("rarity", ""))
+        pick_progress = max(0.0, min(1.0, (pick_number - 1) / 13.0))
+
+        # Exogenous term: commons/uncommons observed late are stronger evidence.
+        availability_term = (rarity_prior - 0.5) * pick_progress
+
+        # Behavioral term: how surprising this pick is relative to ATA.
+        ata_term = (pick_number - ata) / (pick_number + ata)
+
+        scale = self.config.hmm_emission_scale
+        return (availability_term + ata_term) * card_weight * pack_weight * scale
+
+    def _hmm_update_state(self, archetype_name: str, pick_number: int, emission: float) -> None:
+        """One-step HMM-like state update in log-odds space."""
+        prev_log_odds = self.hmm_log_odds.get(archetype_name, 0.0)
+        last_pick = self.hmm_last_pick.get(archetype_name, 1)
+        gap = max(0, pick_number - last_pick)
+
+        decay = max(0.0, 1.0 - self.config.hmm_transition_decay) ** gap
+        updated = (prev_log_odds * decay) + emission
+
+        self.hmm_log_odds[archetype_name] = updated
+        self.hmm_last_pick[archetype_name] = pick_number
+
+    def _scores_hmm_hybrid(self) -> Dict[str, dict]:
+        """HMM-inspired hybrid score returned as posterior P(open)."""
+        scores = {}
+        for arch in self.archetypes:
+            log_odds = self.hmm_log_odds.get(arch.name, 0.0)
+            p_open = 1.0 / (1.0 + math.exp(-log_odds))
+            scores[arch.name] = {
+                "score": p_open,
+                "confidence": self._confidence_level(arch.name),
+                "interval": None,
+            }
+        return scores
 
     def _scores_simple(self) -> Dict[str, dict]:
         """Simple/normalized scoring — sum of signals, no credible interval."""
@@ -324,3 +393,5 @@ class OpennessTracker:
     def reset(self) -> None:
         """Clear all accumulated signals."""
         self.signals.clear()
+        self.hmm_log_odds = {arch.name: 0.0 for arch in self.archetypes}
+        self.hmm_last_pick = {arch.name: 1 for arch in self.archetypes}

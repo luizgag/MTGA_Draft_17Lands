@@ -164,6 +164,7 @@ class ArchetypeEditor:
             "Simple": "simple",
             "Weighted": "normalized",
             "Bayesian (%)": "bayesian_beta",
+            "HMM Hybrid (%)": "hmm_hybrid",
         }
         self._scoring_internal_map = {v: k for k, v in self._scoring_display_map.items()}
 
