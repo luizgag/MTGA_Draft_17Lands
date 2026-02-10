@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MTGA_Draft_17Lands is a Python 3.12 desktop application (Tkinter) that assists Magic: The Gathering Arena drafters by overlaying 17Lands statistical data. It monitors Arena's Player.log file, parses draft events in real-time, and displays card ratings/grades/win rates. Supported events: Premier Draft, Traditional Draft, Quick Draft, Sealed, and Traditional Sealed.
+MTGA_Draft_17Lands is a Python 3.12 desktop application (Tkinter) that assists Magic: The Gathering Arena and Magic Online (MTGO) drafters by overlaying 17Lands statistical data. It monitors Arena's Player.log or MTGO's draft log files, parses draft events in real-time, and displays card ratings/grades/win rates. Supported events: Premier Draft, Traditional Draft, Quick Draft, Sealed, Traditional Sealed, and MTGO Draft.
 
 ## Commands
 
@@ -65,6 +65,11 @@ cd Tools/TierScraper17Lands && npm install --save-dev jest-environment-jsdom && 
 
 **Arena Player.log → ArenaScanner (log_scanner.py) → Dataset (dataset.py) → CardResult (card_logic.py) → Overlay UI (overlay.py)**
 
+**MTGO draft logs → MtgoScanner (mtgo_scanner.py) → Dataset (dataset.py) → CardResult (card_logic.py) → Overlay UI (overlay.py)**
+
+**Dataset merging flow (multi-source downloads):**
+**Settings (per-set DatasetSources) → FileExtractor downloads N sources → merge_datasets() → single {SET}_Data.json → Dataset.open_file()**
+
 ### Key modules
 
 - **overlay.py** (~4300 lines): Main application class. Tkinter UI, event loop, table rendering, tooltips, menus, and all user-facing windows (Taken Cards, Suggested Decks, Card Compare, Settings). This is the orchestrator that ties all other modules together.
@@ -72,14 +77,25 @@ cd Tools/TierScraper17Lands && npm install --save-dev jest-environment-jsdom && 
 - **card_logic.py** (~1167 lines): `CardResult` processes card ratings. Calculates win rates, letter grades (A+ to F based on standard deviations), and 5-point ratings. Implements deck suggestions (Aggro/Mid/Control archetypes) and color filtering.
 - **file_extractor.py** (~1092 lines): Downloads card data from the 17Lands API and extracts card databases from Arena's SQLite data files.
 - **dataset.py** (~316 lines): `Dataset` class loads and provides card lookup (by Arena ID or name) from JSON data files stored in `Sets/`.
-- **configuration.py** (176 lines): Pydantic-based configuration system. Models: `Configuration`, `Settings`, `CardLogic`, `Features`, `CardData`. Persists to `config.json`.
+- **configuration.py** (~200 lines): Pydantic-based configuration system. Models: `Configuration`, `Settings`, `CardLogic`, `Features`, `CardData`, `DatasetSource`. Persists to `config.json`. Key settings: `Settings.platform` (`"MTGA"` or `"MTGO"`), `Settings.mtgo_log_folder`, `Settings.set_sources: Dict[str, List[DatasetSource]]` for per-set multi-source merging, `Features.archetype_openness_enabled`.
 - **limited_sets.py** (~431 lines): Manages set information, fetches set lists from Scryfall API.
 - **tier_list.py** (~372 lines): Downloads tier lists from 17Lands API. Pydantic models: `TierList`, `Meta`, `Rating`. Stores as JSON in `Tier/`.
 - **set_metrics.py** (98 lines): `SetMetrics` calculates mean/standard deviation for win rate fields. Uses scipy's normal distribution for grade/rating conversions.
 - **constants.py** (~600 lines): All configuration constants — 17Lands field mappings, Arena log patterns, color definitions, UI defaults, URLs.
+- **mtgo_scanner.py** (~487 lines): `MtgoScanner` watches a folder for MTGO draft log files (plain text). Implements two-phase incremental parsing: Phase 1 detects pack shown (cards without pick marker), Phase 2 detects pick made (`-->` marker). Shares the same public interface as `ArenaScanner` so overlay code is platform-agnostic. MTGO filenames encode set codes (e.g., `ECLECLECL` = 3 packs of ECL).
+- **archetype_openness.py** (~327 lines): `OpennessTracker` scores how "open" each archetype is during a draft using Bayesian Beta inference. Positive signals accumulate when cards wheel past their ATA (Average Taken At). Signal formula: `(pick - ata) / (pick + ata)` dampens extremes. Card weights from 17Lands `ngp` ratios distinguish archetype-specific cards from generics. `auto_detect_archetypes()` builds archetype configs from dataset data.
+- **archetype_editor.py**: Tkinter editor for archetype configurations. Auto-detection with threshold/weight sliders, per-archetype card lists with editable weights, scoring method selection (Simple/Weighted/Bayesian %), and pack weight controls. Configs persist to `Archetypes/{SET}_archetypes.json`.
+
+### Key subsystems
+
+**Dataset merging**: `merge_datasets()` in `file_extractor.py` combines multiple 17Lands sources with weighted averaging. `COUNT_FIELDS` (ngp, ngoh, gih, ngnd, ngd) are summed; win rate fields are weighted-averaged with zero-count and zero-rate filtering. Per-set sources configured via `DatasetSource` model. Merged files use 2-segment naming (`{SET}_Data.json`); old 4-segment files auto-deleted by `delete_old_set_files()`.
+
+**Archetype openness (Bayesian Beta)**: `OpennessTracker` maintains Beta(alpha, beta) posteriors per archetype. Only positive signals (cards wheeling past ATA) update alpha; cards seen at/before ATA produce no signal. Confidence shown via opacity: none (0 signals, 40%), low (1-4, 60%), medium (5-14, 80%), high (15+, 100%). Green/gray/red bar colors based on P(open) thresholds (0.55/0.45).
+
+**MTGO scanner**: Monitors a folder for `.txt` draft logs. Two-phase incremental parsing: file grows when pack is shown (overlay displays ratings), then again when pick is made (`-->` marker + `Picked:` line). Filename format: `{user}-{date}-{event}-{id}-{setcodes}.txt`. Set codes parsed as 3-char chunks from the suffix.
 
 ### Runtime directories (gitignored)
-`Debug/` (logs), `Downloads/`, `Logs/` (draft logs), `Screenshots/` (P1P1 OCR), `Sets/` (17Lands datasets as JSON), `Temp/`, `Tier/` (tier list data).
+`Archetypes/` (per-set archetype configs as JSON), `Debug/` (logs), `Downloads/`, `Logs/` (draft logs), `Screenshots/` (P1P1 OCR), `Sets/` (17Lands datasets as JSON), `Temp/`, `Tier/` (tier list data).
 
 ### External services
 - **17Lands API**: Card ratings, tier lists, color ratings
