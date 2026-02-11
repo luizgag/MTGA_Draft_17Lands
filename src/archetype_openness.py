@@ -193,30 +193,30 @@ class OpennessTracker:
                 card_weight = archetype.cards[card_name]
 
                 if self.scoring_method == "normalized":
-                    if ata == 0.0:
+                    if ata == 0.0 or pick_number <= ata:
                         continue
                     pick_weight = self._pick_weight(pick_number, max_picks=14)
-                    raw_signal = ((pick_number - ata) / ata) * pick_weight
-                    signal = raw_signal * card_weight * pack_weight
+                    raw_signal = ((pick_number - ata) / (ata + pick_number)**2) * pick_weight
+                    signal = raw_signal * card_weight * pack_weight * 100
                 elif self.scoring_method == "bayesian_beta":
-                    if ata == 0.0:
+                    if ata == 0.0 or pick_number <= ata:
                         continue
-                    if pick_number > ata:
-                        # Card wheeling past ATA -> positive evidence archetype is open
-                        raw_signal = (pick_number - ata) / (pick_number + ata)
-                        signal = raw_signal * card_weight * pack_weight
-                    else:
-                        # Card seen at/before ATA -> no signal from seen cards
-                        continue
+
+                    raw_signal = (pick_number - ata) / (pick_number + ata)
+                    signal = raw_signal * card_weight * pack_weight
                 elif self.scoring_method == "hmm_hybrid":
+                    if ata == 0.0 or pick_number <= ata:
+                        continue
+
                     emission = self._hmm_emission(card, pick_number, ata, card_weight, pack_weight)
                     self._hmm_update_state(archetype.name, pick_number, emission)
                     signal = emission
                 else:  # simple
-                    if ata == 0.0:
+                    if ata == 0.0 or pick_number <= ata:
                         continue
-                    raw_signal = (pick_number - ata) / ata
-                    signal = raw_signal * card_weight * pack_weight
+
+                    raw_signal = (pick_number - ata) / (ata + pick_number)**2 
+                    signal = raw_signal * card_weight * pack_weight * 100
 
                 self.signals.append({
                     "archetype": archetype.name,
@@ -276,14 +276,12 @@ class OpennessTracker:
     def _hmm_emission(self, card: Dict, pick_number: int, ata: float,
                       card_weight: float, pack_weight: float) -> float:
         """Emission contribution to log-odds from one visible card."""
-        if ata <= 0.0:
-            return 0.0
 
         rarity_prior = self._rarity_appearance_prior(card.get("rarity", ""))
         pick_progress = max(0.0, min(1.0, (pick_number - 1) / 13.0))
 
         # Exogenous term: commons/uncommons observed late are stronger evidence.
-        availability_term = (rarity_prior - 0.5) * pick_progress
+        availability_term = rarity_prior * pick_progress
 
         # Behavioral term: how surprising this pick is relative to ATA.
         ata_term = (pick_number - ata) / (pick_number + ata)
