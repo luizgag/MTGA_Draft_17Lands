@@ -176,9 +176,24 @@ class OpennessTracker:
             pack_number: 0-indexed pack number (0=pack1, 1=pack2, 2=pack3)
         """
         if pick_number <= 1:
+            logger.debug(
+                "Openness pick %s.%s skipped: pick 1 has no openness signal",
+                pack_number + 1,
+                pick_number,
+            )
             return
 
         pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
+        logger.debug(
+            "Openness pick %s.%s evaluating %d cards (method=%s, pack_weight=%.3f)",
+            pack_number + 1,
+            pick_number,
+            len(pack_cards),
+            self.scoring_method,
+            pack_weight,
+        )
+
+        signal_count = 0
 
         for card in pack_cards:
             card_name = card.get(DATA_FIELD_NAME, "")
@@ -186,37 +201,64 @@ class OpennessTracker:
             all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
             ata = all_decks.get(DATA_FIELD_ATA, 0.0)
 
+            logger.debug(
+                "  Card '%s' at pick %s.%s: ATA=%.3f",
+                card_name,
+                pack_number + 1,
+                pick_number,
+                ata,
+            )
+
             for archetype in self.archetypes:
                 if card_name not in archetype.cards:
                     continue
 
                 card_weight = archetype.cards[card_name]
 
+                if ata == 0.0:
+                    logger.debug(
+                        "    %s <- %s skipped (missing ATA)",
+                        archetype.name,
+                        card_name,
+                    )
+                    continue
+
+                if pick_number <= ata:
+                    logger.debug(
+                        "    %s <- %s skipped (pick %.1f <= ATA %.1f)",
+                        archetype.name,
+                        card_name,
+                        pick_number,
+                        ata,
+                    )
+                    continue
+
                 if self.scoring_method == "normalized":
-                    if ata == 0.0 or pick_number <= ata:
-                        continue
                     pick_weight = self._pick_weight(pick_number, max_picks=14)
                     raw_signal = ((pick_number - ata) / (ata + pick_number)**2) * pick_weight
                     signal = raw_signal * card_weight * pack_weight * 100
                 elif self.scoring_method == "bayesian_beta":
-                    if ata == 0.0 or pick_number <= ata:
-                        continue
-
                     raw_signal = (pick_number - ata) / (pick_number + ata)
                     signal = raw_signal * card_weight * pack_weight
                 elif self.scoring_method == "hmm_hybrid":
-                    if ata == 0.0 or pick_number <= ata:
-                        continue
-
+                    raw_signal = (pick_number - ata) / (pick_number + ata)
                     emission = self._hmm_emission(card, pick_number, ata, card_weight, pack_weight)
                     self._hmm_update_state(archetype.name, pick_number, emission)
                     signal = emission
                 else:  # simple
-                    if ata == 0.0 or pick_number <= ata:
-                        continue
-
                     raw_signal = (pick_number - ata) / (ata + pick_number)**2 
                     signal = raw_signal * card_weight * pack_weight * 100
+
+                signal_count += 1
+                logger.debug(
+                    "    %s <- %s contributes signal=%.4f (raw=%.4f, card_weight=%.3f, pack_weight=%.3f)",
+                    archetype.name,
+                    card_name,
+                    signal,
+                    raw_signal,
+                    card_weight,
+                    pack_weight,
+                )
 
                 self.signals.append({
                     "archetype": archetype.name,
@@ -225,6 +267,13 @@ class OpennessTracker:
                     "ata": ata,
                     "signal": signal,
                 })
+
+        logger.debug(
+            "Openness pick %s.%s complete: %d signals recorded",
+            pack_number + 1,
+            pick_number,
+            signal_count,
+        )
 
     def _pick_weight(self, pick_number: int, max_picks: int = 14) -> float:
         """Weight from 0.0 (pick 1) to 1.0 (final pick), shaped by weight_curve."""
