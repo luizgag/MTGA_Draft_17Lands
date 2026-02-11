@@ -305,3 +305,39 @@ class TestRetrieveMethods:
         scanner_with_folder.draft_start_search()
         metrics = scanner_with_folder.retrieve_set_metrics()
         assert metrics is not None
+
+
+class TestHindsightNavigation:
+    """Test loading a specific MTGO draft file and navigating picks."""
+
+    def test_load_draft_file_builds_history(self, scanner_with_folder):
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert files
+
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+        assert scanner_with_folder.hindsight_mode is True
+        assert len(scanner_with_folder.pick_history) > 0
+        assert scanner_with_folder.history_index == 0
+
+    def test_navigate_history_forward_and_backward(self, scanner_with_folder):
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        original_pick = scanner_with_folder.current_pick
+        assert scanner_with_folder.navigate_history(1) is True
+        assert scanner_with_folder.current_pick >= original_pick
+
+        assert scanner_with_folder.navigate_history(-1) is True
+        assert scanner_with_folder.history_index == 0
+
+    def test_navigate_history_stops_at_bounds(self, scanner_with_folder):
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        assert scanner_with_folder.navigate_history(-1) is False
+
+        while scanner_with_folder.navigate_history(1):
+            pass
+
+        assert scanner_with_folder.history_index == len(scanner_with_folder.pick_history) - 1
+        assert scanner_with_folder.navigate_history(1) is False
