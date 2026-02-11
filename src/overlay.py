@@ -315,6 +315,9 @@ class Overlay(ScaledWindow):
         self.best_in_column_threshold_value = tkinter.DoubleVar(self.root)
         self.platform_selection = tkinter.StringVar(self.root)
         self.mtgo_log_folder_value = tkinter.StringVar(self.root)
+        self.mtgo_hindsight_checkbox_value = tkinter.IntVar(self.root)
+        self.mtgo_file_selection = tkinter.StringVar(self.root)
+        self.mtgo_file_map = {}
 
         self.taken_type_creature_checkbox_value = tkinter.IntVar(self.root)
         self.taken_type_creature_checkbox_value.set(True)
@@ -378,6 +381,19 @@ class Overlay(ScaledWindow):
         self.refresh_button_frame = tkinter.Frame(self.root)
         self.refresh_button = Button(
             self.refresh_button_frame, command=lambda: self.__update_overlay_callback(True, Source.REFRESH), text="Refresh")
+
+        self.mtgo_hindsight_frame = tkinter.Frame(self.root)
+        self.mtgo_file_option_frame = tkinter.Frame(self.mtgo_hindsight_frame)
+        self.mtgo_prev_button = Button(self.mtgo_hindsight_frame, text="←", width=3,
+                                       command=lambda: self.__navigate_mtgo_history(-1))
+        self.mtgo_next_button = Button(self.mtgo_hindsight_frame, text="→", width=3,
+                                       command=lambda: self.__navigate_mtgo_history(1))
+        self.mtgo_file_options = OptionMenu(self.mtgo_file_option_frame, self.mtgo_file_selection,
+                                            "Select MTGO draft log", "Select MTGO draft log",
+                                            style="All.TMenubutton",
+                                            command=self.__on_mtgo_file_selected)
+        menu = self.root.nametowidget(self.mtgo_file_options['menu'])
+        menu.config(font=self.fonts_dict["All.TMenubutton"])
 
         self.separator_frame_draft = Separator(self.root, orient='horizontal')
         self.status_frame = tkinter.Frame(self.root)
@@ -464,19 +480,25 @@ class Overlay(ScaledWindow):
         self.refresh_button_frame.grid(
             row=8, column=0, columnspan=2, sticky='nsew')
 
-        self.status_frame.grid(row=9, column=0, columnspan=2, sticky='nsew')
-        self.pack_table_frame.grid(row=10, column=0, columnspan=2, sticky='ew')
-        self.openness_frame.grid(row=11, column=0, columnspan=2, sticky='ew')
+        self.mtgo_hindsight_frame.grid(row=9, column=0, columnspan=2, sticky='nsew')
+        self.status_frame.grid(row=10, column=0, columnspan=2, sticky='nsew')
+        self.pack_table_frame.grid(row=11, column=0, columnspan=2, sticky='ew')
+        self.openness_frame.grid(row=12, column=0, columnspan=2, sticky='ew')
         self.openness_frame.grid_remove()  # Hidden until archetypes loaded
-        self.missing_frame.grid(row=12, column=0, columnspan=2, sticky='nsew')
-        self.missing_table_frame.grid(row=13, column=0, columnspan=2, sticky='ew')
-        self.stat_frame.grid(row=14, column=0, columnspan=2, sticky='nsew')
-        self.stat_table.grid(row=15, column=0, columnspan=2, sticky='nsew')
-        footnote_label.grid(row=16, column=0, columnspan=2)
+        self.missing_frame.grid(row=13, column=0, columnspan=2, sticky='nsew')
+        self.missing_table_frame.grid(row=14, column=0, columnspan=2, sticky='ew')
+        self.stat_frame.grid(row=15, column=0, columnspan=2, sticky='nsew')
+        self.stat_table.grid(row=16, column=0, columnspan=2, sticky='nsew')
+        footnote_label.grid(row=17, column=0, columnspan=2)
 
         self.root.bind("<Configure>", self.__on_window_resize)
 
         self.refresh_button.pack(expand=True, fill="both")
+
+        self.mtgo_file_options.pack(side=tkinter.LEFT, expand=True, fill="both", anchor="w")
+        self.mtgo_file_option_frame.pack(side=tkinter.LEFT, expand=True, fill="both")
+        self.mtgo_prev_button.pack(side=tkinter.LEFT, padx=(self._scale_value(3), self._scale_value(3)))
+        self.mtgo_next_button.pack(side=tkinter.LEFT)
 
         self.pack_pick_label.pack(expand=False, fill=None)
         self.pack_table.pack(expand=True, fill='both')
@@ -495,6 +517,7 @@ class Overlay(ScaledWindow):
         self.log_check_id = None
 
         self.__update_settings_data()
+        self.__refresh_mtgo_hindsight_files()
         self.__update_overlay_callback(False)
 
         self.root.attributes("-topmost", True)
@@ -1286,6 +1309,7 @@ class Overlay(ScaledWindow):
         '''Callback function reconfigures the application whenever the settings change'''
         self.__update_settings_storage()
         self.__update_settings_data()
+        self.__refresh_mtgo_hindsight_files()
         self.__update_overlay_callback(False)
 
     def __ui_size_callback(self, *_):
@@ -1328,6 +1352,7 @@ class Overlay(ScaledWindow):
             self.data_sources = self.draft.retrieve_data_sources()
             self.__update_data_source_options(True)
             self.__update_draft_data()
+            self.__refresh_mtgo_hindsight_files(select_current=True)
             mean, std = self.set_metrics.get_metrics(constants.FILTER_OPTION_ALL_DECKS, constants.DATA_FIELD_GIHWR)
             logger.info("%s, Mean: %.1f, Standard Deviation: %.1f",
                         self.draft.draft_sets,
@@ -1433,6 +1458,14 @@ class Overlay(ScaledWindow):
                 self.best_in_column_threshold_value.get())
             self.configuration.settings.platform = self.platform_selection.get()
             self.configuration.settings.mtgo_log_folder = self.mtgo_log_folder_value.get()
+            self.configuration.settings.mtgo_hindsight_enabled = bool(
+                self.mtgo_hindsight_checkbox_value.get())
+
+            if not self.configuration.settings.mtgo_hindsight_enabled and self.draft.hindsight_mode:
+                self.draft.hindsight_mode = False
+                self.draft.pick_history = []
+                self.draft.history_index = -1
+
             write_configuration(self.configuration)
         except Exception as error:
             logger.error(error)
@@ -1526,6 +1559,8 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.platform)
             self.mtgo_log_folder_value.set(
                 self.configuration.settings.mtgo_log_folder)
+            self.mtgo_hindsight_checkbox_value.set(
+                self.configuration.settings.mtgo_hindsight_enabled)
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -1605,7 +1640,7 @@ class Overlay(ScaledWindow):
                                  fields)
 
         # Update openness scoring
-        if self.openness_tracker and pack_cards:
+        if self.openness_tracker and pack_cards and not (self.draft.hindsight_mode and source == Source.REFRESH):
             pick_in_pack = self.draft.retrieve_current_pick_in_pack()
             self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
             self.__update_openness_panel()
@@ -1792,6 +1827,10 @@ class Overlay(ScaledWindow):
         '''Function that monitors the Arena/MTGO log every 1000ms to determine if there's new draft data'''
         try:
             if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+                if self.configuration.settings.mtgo_hindsight_enabled and self.draft.hindsight_mode:
+                    self.log_check_id = self.root.after(1000, self.__arena_log_check)
+                    return
+
                 # MTGO: Check folder mtime (new files) and current file mtime (content growth)
                 mtgo_folder = self.configuration.settings.mtgo_log_folder
                 latest_mtime = 0
@@ -1820,6 +1859,63 @@ class Overlay(ScaledWindow):
             self.__reset_draft(True)
 
         self.log_check_id = self.root.after(1000, self.__arena_log_check)
+
+    def __refresh_mtgo_hindsight_files(self, select_current=False):
+        '''Populate the MTGO hindsight draft log dropdown.'''
+        if self.configuration.settings.platform != constants.PLATFORM_MTGO or not self.configuration.settings.mtgo_hindsight_enabled:
+            self.mtgo_file_map = {}
+            self.mtgo_file_selection.set("Select MTGO draft log")
+            return
+
+        files = self.draft.retrieve_draft_log_files()
+        self.mtgo_file_map = {path.basename(f): f for f in files}
+
+        menu = self.root.nametowidget(self.mtgo_file_options['menu'])
+        menu.delete(0, 'end')
+
+        if not self.mtgo_file_map:
+            placeholder = "Select MTGO draft log"
+            menu.add_command(label=placeholder, command=lambda value=placeholder: self.mtgo_file_selection.set(value))
+            self.mtgo_file_selection.set(placeholder)
+            return
+
+        labels = list(self.mtgo_file_map.keys())
+        for label in labels:
+            menu.add_command(label=label, command=lambda value=label: self.__on_mtgo_file_selected(value))
+
+        if select_current and self.draft.current_file:
+            current_name = path.basename(self.draft.current_file)
+            if current_name in self.mtgo_file_map:
+                self.mtgo_file_selection.set(current_name)
+                return
+
+        if self.mtgo_file_selection.get() not in self.mtgo_file_map:
+            self.mtgo_file_selection.set(labels[0])
+
+    def __on_mtgo_file_selected(self, selected_file):
+        '''Load an MTGO draft log file for hindsight pick navigation.'''
+        if self.configuration.settings.platform != constants.PLATFORM_MTGO or not self.configuration.settings.mtgo_hindsight_enabled:
+            return
+
+        filepath = self.mtgo_file_map.get(selected_file)
+        if not filepath:
+            return
+
+        if not self.draft.load_draft_file(filepath):
+            return
+
+        self.data_sources = self.draft.retrieve_data_sources()
+        self.__update_data_source_options(True)
+        self.__update_draft_data()
+        self.__update_overlay_callback(False)
+
+    def __navigate_mtgo_history(self, direction):
+        '''Navigate through loaded MTGO picks using arrow buttons.'''
+        if self.configuration.settings.platform != constants.PLATFORM_MTGO or not self.configuration.settings.mtgo_hindsight_enabled:
+            return
+
+        if self.draft.navigate_history(direction):
+            self.__update_overlay_callback(False, Source.REFRESH)
 
     def __update_set_start_date(self, start, selection, set_list, *_):
         '''Function that's used to determine if a set in the Set View window has minimum start date
@@ -2830,9 +2926,24 @@ class Overlay(ScaledWindow):
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
 
+            mtgo_hindsight_label = Label(
+                popup, text="Enable MTGO Hindsight:", style="MainSectionsBold.TLabel", anchor="e")
+            mtgo_hindsight_checkbox = Checkbutton(popup,
+                                                  variable=self.mtgo_hindsight_checkbox_value,
+                                                  onvalue=1,
+                                                  offvalue=0)
+
             best_in_column_threshold_label = Label(popup, text="Best Column Threshold (%):",
                                     style="MainSectionsBold.TLabel", anchor="e")
             best_in_column_threshold_entry = Entry(popup, textvariable=self.best_in_column_threshold_value)
+
+            mtgo_hindsight_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            mtgo_hindsight_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
 
             best_in_column_threshold_label.grid(
                 row=row_count, column=0, columnspan=1, sticky="nsew",
@@ -3392,6 +3503,8 @@ class Overlay(ScaledWindow):
                     "w", self.__update_taken_table)),
                 (self.mtgo_log_folder_value, lambda: self.mtgo_log_folder_value.trace(
                     "w", self.__update_settings_callback)),
+                (self.mtgo_hindsight_checkbox_value, lambda: self.mtgo_hindsight_checkbox_value.trace(
+                    "w", self.__update_settings_callback)),
             ]
 
             if enabled:
@@ -3461,6 +3574,8 @@ class Overlay(ScaledWindow):
 
         toggle_widget(self.refresh_button_frame,
                       self.refresh_button_checkbox_value.get())
+        toggle_widget(self.mtgo_hindsight_frame,
+                      self.configuration.settings.platform == constants.PLATFORM_MTGO and self.configuration.settings.mtgo_hindsight_enabled)
 
         draft_visible = self.current_draft_checkbox_value.get()
         toggle_widget(self.current_draft_label_frame, draft_visible)
