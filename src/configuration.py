@@ -65,6 +65,7 @@ class Settings(BaseModel):
     arena_log_location: str = ""
     platform: str = constants.PLATFORM_MTGA
     mtgo_log_folder: str = ""
+    mtgo_hindsight_enabled: bool = False
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
     set_sources: Dict[str, List[DatasetSource]] = Field(default_factory=dict)
 

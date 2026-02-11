@@ -56,6 +56,9 @@ class MtgoScanner:
         self.state = MtgoScannerState.WAITING
         self.current_pick_in_pack = 0
         self.draft_detected = False
+        self.hindsight_mode = False
+        self.pick_history = []
+        self.history_index = -1
 
     def set_arena_file(self, filename):
         '''Public function for compatibility - sets the log folder'''
@@ -98,6 +101,67 @@ class MtgoScanner:
         self.state = MtgoScannerState.WAITING
         self.current_pick_in_pack = 0
         self.draft_detected = False
+        self.pick_history = []
+        self.history_index = -1
+        self.hindsight_mode = False
+
+    def retrieve_draft_log_files(self):
+        '''Return draft log file paths in the current folder (newest first).'''
+        files = []
+
+        try:
+            if self.log_folder and os.path.isdir(self.log_folder):
+                for filename in os.listdir(self.log_folder):
+                    if filename.endswith('.txt'):
+                        filepath = os.path.join(self.log_folder, filename)
+                        files.append(filepath)
+                files.sort(key=os.path.getmtime, reverse=True)
+        except Exception as error:
+            logger.error(error)
+
+        return files
+
+    def load_draft_file(self, filepath):
+        '''Load a specific MTGO draft log file and initialize hindsight navigation.'''
+        if not filepath or not os.path.isfile(filepath):
+            return False
+
+        try:
+            self.clear_draft(False)
+            self.current_file = filepath
+
+            if not self.__parse_header():
+                return False
+
+            with open(self.current_file, 'r', encoding='utf-8', errors='replace') as file:
+                content = file.read()
+
+            self.pick_history = self.__build_pick_history(content)
+            self.hindsight_mode = bool(self.pick_history)
+            if self.hindsight_mode:
+                self.history_index = 0
+                self.__apply_history_state(self.history_index)
+
+            self.draft_detected = True
+            self.draft_type = constants.LIMITED_TYPE_MTGO_DRAFT
+            return True
+        except Exception as error:
+            logger.error(error)
+
+        return False
+
+    def navigate_history(self, offset):
+        '''Move backward/forward through hindsight picks using a signed offset.'''
+        if not self.pick_history:
+            return False
+
+        new_index = min(max(self.history_index + offset, 0), len(self.pick_history) - 1)
+        if new_index == self.history_index:
+            return False
+
+        self.history_index = new_index
+        self.__apply_history_state(self.history_index)
+        return True
 
     def draft_start_search(self):
         '''Search for the most recent MTGO draft log file and detect a new draft'''
@@ -134,6 +198,9 @@ class MtgoScanner:
 
     def draft_data_search(self, use_ocr=False, save_screenshot=False):
         '''Search the current draft log file for new pack/pick data'''
+        if self.hindsight_mode:
+            return False
+
         update = False
 
         try:
@@ -484,3 +551,100 @@ class MtgoScanner:
             logger.error(error)
 
         return update
+
+    def __build_pick_history(self, content):
+        '''Build a full list of pick states from a complete MTGO log file.'''
+        history = []
+
+        try:
+            pack_cards = []
+            taken_cards = []
+            picked_cards_in_pack = []
+            initial_pack_cards = []
+            current_pack = 0
+            current_pick_in_pack = 0
+            lines = content.split('\n')
+            i = 0
+
+            while i < len(lines):
+                line = lines[i]
+                pack_match = re.match(r'^Pack (\d+) pick (\d+):', line)
+                if not pack_match:
+                    i += 1
+                    continue
+
+                pack_num = int(pack_match.group(1))
+                if pack_num != current_pack:
+                    current_pack = pack_num
+                    current_pick_in_pack = 0
+                    picked_cards_in_pack = []
+                    initial_pack_cards = []
+
+                card_names = []
+                picked_card = None
+                i += 1
+
+                while i < len(lines):
+                    card_line = lines[i]
+                    if card_line.strip() == "" or card_line.startswith("Picked:") or card_line.startswith("------"):
+                        break
+
+                    if card_line.startswith("-->"):
+                        picked_card = card_line[4:].strip()
+                        card_names.append(picked_card)
+                    else:
+                        card_name = card_line.strip()
+                        if card_name:
+                            card_names.append(card_name)
+                    i += 1
+
+                if not card_names:
+                    continue
+
+                current_pick_in_pack += 1
+                if current_pick_in_pack == 1:
+                    initial_pack_cards = card_names[:]
+
+                state = MtgoScannerState.PACK_SHOWN
+                shown_cards = card_names[:]
+
+                if picked_card:
+                    shown_cards = [c for c in card_names if c != picked_card]
+                    picked_cards_in_pack = picked_cards_in_pack + [picked_card]
+                    taken_cards = taken_cards + [picked_card]
+                    state = MtgoScannerState.PICK_MADE
+
+                history.append({
+                    "current_pack": current_pack,
+                    "current_pick_in_pack": current_pick_in_pack,
+                    "current_pick": (current_pack - 1) * 15 + current_pick_in_pack,
+                    "pack_cards": shown_cards,
+                    "initial_pack_cards": initial_pack_cards[:],
+                    "picked_cards_in_pack": picked_cards_in_pack[:],
+                    "taken_cards": taken_cards[:],
+                    "state": state,
+                })
+
+            # If no picks were identified, keep existing parser behavior fallback.
+            if not history and content:
+                self.__parse_draft_content(content)
+
+        except Exception as error:
+            logger.error(error)
+
+        return history
+
+    def __apply_history_state(self, index):
+        '''Apply one stored hindsight state to the scanner's live fields.'''
+        if index < 0 or index >= len(self.pick_history):
+            return
+
+        state = self.pick_history[index]
+        self.current_pack = state["current_pack"]
+        self.current_pick_in_pack = state["current_pick_in_pack"]
+        self.current_pick = state["current_pick"]
+        self.pack_cards = state["pack_cards"][:]
+        self.initial_pack_cards = state["initial_pack_cards"][:]
+        self.picked_cards_in_pack = state["picked_cards_in_pack"][:]
+        self.taken_cards = state["taken_cards"][:]
+        self.state = state["state"]
