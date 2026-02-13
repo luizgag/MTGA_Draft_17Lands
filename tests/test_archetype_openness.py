@@ -152,32 +152,32 @@ def _make_card(name, ata):
 
 
 class TestOpennessTrackerSimple:
-    """Tests for simple scoring method: signal = (pick - ATA) * weight * pack_weight."""
+    """Tests for simple scoring method: signal = (pick - ATA) / (ATA + pick)^2 * weight * pack_weight * 100."""
 
     def test_single_card_positive_signal(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
         pack = [_make_card("Elf Lord", ata=3.0)]
         tracker.record_pack(pack, pick_number=7, pack_number=0)
         scores = tracker.get_scores()
-        # (7-3)/3 * 0.9 = 1.2
-        assert scores["BG Elves"]["score"] == pytest.approx(1.2, abs=0.01)
+        # (7-3)/(3+7)^2 * 0.9 * 100 = 3.6
+        assert scores["BG Elves"]["score"] == pytest.approx(3.6, abs=0.01)
 
     def test_single_card_negative_signal(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
         pack = [_make_card("Elf Lord", ata=7.0)]
         tracker.record_pack(pack, pick_number=3, pack_number=0)
         scores = tracker.get_scores()
-        # (3-7)/7 * 0.9 = -0.5143
-        assert scores["BG Elves"]["score"] == pytest.approx(-0.5143, abs=0.01)
+        # pick(3) <= ata(7): signal skipped for simple scoring
+        assert scores["BG Elves"]["score"] == pytest.approx(0.0, abs=0.01)
 
     def test_multi_archetype_card(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
         pack = [_make_card("Murder", ata=4.0)]
         tracker.record_pack(pack, pick_number=8, pack_number=0)
         scores = tracker.get_scores()
-        # (8-4)/4 = 1.0. BG: 1.0*0.2=0.2. UB: 1.0*0.7=0.7
-        assert scores["BG Elves"]["score"] == pytest.approx(0.2, abs=0.01)
-        assert scores["UB Control"]["score"] == pytest.approx(0.7, abs=0.01)
+        # raw=(8-4)/(4+8)^2=4/144. BG: 4/144*0.2*100=0.5556. UB: 4/144*0.7*100=1.9444
+        assert scores["BG Elves"]["score"] == pytest.approx(0.5556, abs=0.01)
+        assert scores["UB Control"]["score"] == pytest.approx(1.9444, abs=0.01)
 
     def test_card_not_in_any_archetype(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
@@ -192,8 +192,8 @@ class TestOpennessTrackerSimple:
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=0)
         tracker.record_pack([_make_card("Llanowar Elves", ata=5.0)], pick_number=9, pack_number=0)
         scores = tracker.get_scores()
-        # sig1=(7-3)/3*0.9=1.2, sig2=(9-5)/5*0.5=0.4. total=1.6
-        assert scores["BG Elves"]["score"] == pytest.approx(1.6, abs=0.01)
+        # sig1=(7-3)/(3+7)^2*0.9*100=3.6, sig2=(9-5)/(5+9)^2*0.5*100=1.0204. total=4.6204
+        assert scores["BG Elves"]["score"] == pytest.approx(4.6204, abs=0.01)
 
     def test_pack_weights_applied(self):
         config = ArchetypeConfig(
@@ -205,8 +205,8 @@ class TestOpennessTrackerSimple:
         tracker = OpennessTracker(config)
         tracker.record_pack([_make_card("Elf Lord", ata=3.0)], pick_number=7, pack_number=1)
         scores = tracker.get_scores()
-        # (7-3)/3 * 0.9 * 0.5 = 0.6
-        assert scores["BG Elves"]["score"] == pytest.approx(0.6, abs=0.01)
+        # (7-3)/(3+7)^2 * 0.9 * 0.5 * 100 = 1.8
+        assert scores["BG Elves"]["score"] == pytest.approx(1.8, abs=0.01)
 
     def test_reset_clears_signals(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
@@ -230,7 +230,7 @@ class TestOpennessTrackerSimple:
 
 
 class TestOpennessTrackerNormalized:
-    """Tests for normalized scoring: signal = ((pick - ATA) / ATA) * pick_weight * card_weight * pack_weight."""
+    """Tests for normalized scoring: signal = ((pick - ATA) / (ATA + pick)^2) * pick_weight * card_weight * pack_weight * 100."""
 
     def test_normalized_scoring(self):
         """pick=6, ata=2.0, weight=0.9, linear pick_weight(6)=5/13."""
@@ -242,8 +242,8 @@ class TestOpennessTrackerNormalized:
         tracker = OpennessTracker(config)
         tracker.record_pack([_make_card("Elf Lord", ata=2.0)], pick_number=6, pack_number=0)
         scores = tracker.get_scores()
-        # ((6-2)/2) * (5/13) * 0.9 = 2.0 * 0.3846 * 0.9 ≈ 0.6923
-        assert scores["BG Elves"]["score"] == pytest.approx(0.6923, abs=0.01)
+        # ((6-2)/(2+6)^2) * (5/13) * 0.9 * 100 = 0.0625 * 0.3846 * 0.9 * 100 ≈ 2.1635
+        assert scores["BG Elves"]["score"] == pytest.approx(2.1635, abs=0.01)
 
     def test_normalized_emphasizes_low_ata(self):
         config = ArchetypeConfig(
@@ -255,9 +255,9 @@ class TestOpennessTrackerNormalized:
         tracker.record_pack([_make_card("Early", ata=2.0)], pick_number=6, pack_number=0)
         tracker.record_pack([_make_card("Late", ata=8.0)], pick_number=12, pack_number=0)
         scores = tracker.get_scores()
-        # Early: ((6-2)/2) * (5/13) * 1.0 = 0.7692
-        # Late: ((12-8)/8) * (11/13) * 1.0 = 0.4231
-        assert scores["Test"]["score"] == pytest.approx(1.1923, abs=0.01)
+        # Early: ((6-2)/(2+6)^2) * (5/13) * 1.0 * 100 = 2.4038
+        # Late: ((12-8)/(8+12)^2) * (11/13) * 1.0 * 100 = 0.8462
+        assert scores["Test"]["score"] == pytest.approx(3.2500, abs=0.01)
 
     def test_normalized_zero_ata_skipped(self):
         config = ArchetypeConfig(
@@ -826,10 +826,10 @@ class TestPickWeight:
         """A card with low ATA seen at a late pick should produce a strong positive signal."""
         tracker = self._make_tracker("linear")
         # pick 13 of 14: pick_weight = 12/13 ≈ 0.923
-        # ata=2.0: raw = ((13-2)/2) * 0.923 = 5.5 * 0.923 ≈ 5.077
+        # ata=2.0: raw = ((13-2)/(2+13)^2) * (12/13) * 100 ≈ 4.5128
         tracker.record_pack([_make_card("Card", ata=2.0)], pick_number=13, pack_number=0)
         scores = tracker.get_scores()
-        expected = ((13 - 2) / 2.0) * (12.0 / 13.0) * 1.0
+        expected = ((13 - 2) / (2.0 + 13)**2) * (12.0 / 13.0) * 1.0 * 100
         assert scores["Test"]["score"] == pytest.approx(expected, abs=0.01)
 
 
