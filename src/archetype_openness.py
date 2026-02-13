@@ -30,6 +30,7 @@ class ArchetypeConfig(BaseModel):
     hmm_transition_decay: float = 0.15
     hmm_emission_scale: float = 1.0
     hmm_openness_factor: float = 2.0
+    hmm_pick_ramp: int = 5
     rarity_odds: Dict[str, float] = Field(default_factory=lambda: {
         "common": 0.0899,
         "uncommon": 0.0388,
@@ -165,6 +166,7 @@ class OpennessTracker:
         self.signals: List[Dict] = []
         self.hmm_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
+        self.hmm_sum_sq: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -316,6 +318,11 @@ class OpennessTracker:
         return self._scores_simple()
 
 
+    def _hmm_pick_ramp_factor(self, pick_number: int) -> float:
+        """Warm-up ramp: reduces early-pick emissions, full weight after hmm_pick_ramp picks."""
+        ramp_picks = max(2, self.config.hmm_pick_ramp)
+        return min(1.0, (pick_number - 1) / (ramp_picks - 1))
+
     def _hmm_emission(self, card: Dict, pick_number: int, ata: float,
                       card_weight: float, pack_weight: float) -> float:
         """Emission contribution to log-odds from one visible card.
@@ -348,7 +355,8 @@ class OpennessTracker:
             rarity_weight = 1.0
 
         scale = self.config.hmm_emission_scale
-        return log_bf * card_weight * pack_weight * rarity_weight * scale
+        ramp = self._hmm_pick_ramp_factor(pick_number)
+        return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
 
     def _hmm_update_state(self, archetype_name: str, pick_number: int, emission: float) -> None:
         """One-step HMM-like state update in log-odds space."""
@@ -362,16 +370,38 @@ class OpennessTracker:
         self.hmm_log_odds[archetype_name] = updated
         self.hmm_last_pick[archetype_name] = pick_number
 
+        # Track decayed sum of squared emissions for variance estimation
+        prev_sum_sq = self.hmm_sum_sq.get(archetype_name, 0.0)
+        self.hmm_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
+
     def _scores_hmm_hybrid(self) -> Dict[str, dict]:
-        """HMM-inspired hybrid score returned as posterior P(open)."""
+        """HMM-inspired hybrid score returned as posterior P(open).
+
+        Also computes a 95% approximate credible interval via the delta method:
+        sigma_logodds = sqrt(sum_sq_emissions), then propagate through sigmoid
+        using d/dx sigmoid(x) = sigmoid(x)*(1 - sigmoid(x)).
+        """
         scores = {}
         for arch in self.archetypes:
             log_odds = self.hmm_log_odds.get(arch.name, 0.0)
             p_open = 1.0 / (1.0 + math.exp(-log_odds))
+
+            # Variance estimation via decayed sum-of-squared emissions
+            sum_sq = self.hmm_sum_sq.get(arch.name, 0.0)
+            if sum_sq > 0:
+                sigma_logodds = math.sqrt(sum_sq)
+                # Delta method: sigma_p ≈ p*(1-p) * sigma_logodds
+                sigma_p = p_open * (1.0 - p_open) * sigma_logodds
+                interval_low = max(0.0, p_open - 1.96 * sigma_p)
+                interval_high = min(1.0, p_open + 1.96 * sigma_p)
+                interval = (interval_low, interval_high)
+            else:
+                interval = None
+
             scores[arch.name] = {
                 "score": p_open,
                 "confidence": self._confidence_level(arch.name),
-                "interval": None,
+                "interval": interval,
             }
         return scores
 
@@ -454,3 +484,4 @@ class OpennessTracker:
         self.signals.clear()
         self.hmm_log_odds = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick = {arch.name: 1 for arch in self.archetypes}
+        self.hmm_sum_sq = {arch.name: 0.0 for arch in self.archetypes}

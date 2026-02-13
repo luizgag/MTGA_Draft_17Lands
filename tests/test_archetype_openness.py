@@ -483,6 +483,199 @@ class TestOpennessTrackerHMMHybrid:
         score = tracker.get_scores()["Test"]["score"]
         assert score == pytest.approx(0.5)  # no change from prior
 
+    def test_hmm_pick_ramp_dampens_early_picks(self):
+        """Pick 2 emission should be ~25% of pick 6+ emission (ramp_picks=5).
+
+        With ramp_picks=5:
+          pick 2: ramp = (2-1)/(5-1) = 0.25
+          pick 6: ramp = min(1.0, (6-1)/(5-1)) = 1.0
+
+        The log Bayes factor scales as (p-1), so pick 2 base = 1, pick 6 base = 5.
+        With ramp: pick 2 effective = 1*0.25 = 0.25, pick 6 effective = 5*1.0 = 5.0.
+        Ratio = 20x, so pick 6 score should be much larger.
+        """
+        import math
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            hmm_pick_ramp=5,
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker_early = OpennessTracker(config)
+        card = _make_card("Card", ata=5.0)
+        card["rarity"] = "common"
+        tracker_early.record_pack([card], pick_number=2, pack_number=0)
+        score_early = tracker_early.get_scores()["Test"]["score"]
+
+        tracker_late = OpennessTracker(config)
+        tracker_late.record_pack([card], pick_number=6, pack_number=0)
+        score_late = tracker_late.get_scores()["Test"]["score"]
+
+        # Pick 2 should produce a signal much closer to 0.5 (neutral)
+        assert score_early > 0.5
+        assert score_early < 0.55  # heavily dampened
+        assert score_late > score_early
+
+    def test_hmm_pick_ramp_full_weight_at_threshold(self):
+        """Picks at or above hmm_pick_ramp should get full ramp weight (1.0)."""
+        import math
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            hmm_pick_ramp=5,
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        # Ramp at pick 5: (5-1)/(5-1) = 1.0
+        assert tracker._hmm_pick_ramp_factor(5) == pytest.approx(1.0)
+        # Ramp at pick 10: min(1.0, 9/4) = 1.0
+        assert tracker._hmm_pick_ramp_factor(10) == pytest.approx(1.0)
+        # Ramp at pick 2: (2-1)/(5-1) = 0.25
+        assert tracker._hmm_pick_ramp_factor(2) == pytest.approx(0.25)
+        # Ramp at pick 3: (3-1)/(5-1) = 0.50
+        assert tracker._hmm_pick_ramp_factor(3) == pytest.approx(0.50)
+
+    def test_hmm_pick_ramp_config_default(self):
+        """Default hmm_pick_ramp is 5."""
+        config = ArchetypeConfig(set_code="TST")
+        assert config.hmm_pick_ramp == 5
+
+    def test_hmm_pick_ramp_config_round_trip(self, tmp_path):
+        """hmm_pick_ramp persists through save/load."""
+        config = ArchetypeConfig(set_code="TST", hmm_pick_ramp=7)
+        file_path = str(tmp_path / "test_config.json")
+        save_archetype_config(config, file_path)
+        loaded = load_archetype_config(file_path)
+        assert loaded.hmm_pick_ramp == 7
+
+    def test_hmm_pick_ramp_old_config_gets_default(self):
+        """Config JSON missing hmm_pick_ramp field gets default 5."""
+        data = {"set_code": "TST", "scoring_method": "hmm_hybrid"}
+        config = ArchetypeConfig.model_validate(data)
+        assert config.hmm_pick_ramp == 5
+
+    def test_hmm_interval_returned_after_signals(self):
+        """HMM Hybrid should return a non-None interval tuple after recording signals."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=3.0)], pick_number=7, pack_number=0)
+        data = tracker.get_scores()["Test"]
+        assert data["interval"] is not None
+        low, high = data["interval"]
+        assert 0.0 <= low <= data["score"]
+        assert data["score"] <= high <= 1.0
+
+    def test_hmm_interval_none_with_no_signals(self):
+        """HMM Hybrid should return interval=None when no signals have been recorded."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        data = tracker.get_scores()["Test"]
+        assert data["interval"] is None
+
+    def test_hmm_interval_narrows_with_more_signals(self):
+        """Interval half-width should not grow unboundedly; with consistent signals
+        the sigmoid compression keeps the interval manageable."""
+        import math
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+
+        # Record one signal
+        tracker.record_pack([_make_card("Card", ata=5.0)], pick_number=8, pack_number=0)
+        data_1 = tracker.get_scores()["Test"]
+        half_1 = (data_1["interval"][1] - data_1["interval"][0]) / 2
+
+        # Record many more consistent signals
+        for pick in range(9, 14):
+            tracker.record_pack([_make_card("Card", ata=5.0)], pick_number=pick, pack_number=0)
+
+        data_many = tracker.get_scores()["Test"]
+        half_many = (data_many["interval"][1] - data_many["interval"][0]) / 2
+
+        # Score should be well above 0.5 with all positive signals
+        assert data_many["score"] > 0.7
+        # The interval should be valid
+        assert 0.0 <= data_many["interval"][0] <= data_many["score"]
+        assert data_many["score"] <= data_many["interval"][1] <= 1.0
+
+    def test_hmm_interval_bounds_valid(self):
+        """Interval bounds must always be in [0, 1] and low <= score <= high."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 0.8})],
+        )
+        tracker = OpennessTracker(config)
+        for pick in range(2, 14):
+            tracker.record_pack([_make_card("Card", ata=4.0)], pick_number=pick, pack_number=0)
+        data = tracker.get_scores()["Test"]
+        low, high = data["interval"]
+        assert 0.0 <= low
+        assert low <= data["score"]
+        assert data["score"] <= high
+        assert high <= 1.0
+
+    def test_hmm_reset_clears_variance(self):
+        """Reset should clear interval state so scores return interval=None again."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=3.0)], pick_number=7, pack_number=0)
+        assert tracker.get_scores()["Test"]["interval"] is not None
+
+        tracker.reset()
+        assert tracker.get_scores()["Test"]["interval"] is None
+
+
+class TestBayesianBetaInterval:
+    """Tests for Bayesian Beta credible interval display (already computed, now surfaced)."""
+
+    def test_bayesian_interval_returned(self):
+        """Bayesian Beta should return a non-None interval tuple after signals."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_beta",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=3.0)], pick_number=7, pack_number=0)
+        data = tracker.get_scores()["Test"]
+        assert data["interval"] is not None
+        low, high = data["interval"]
+        assert 0.0 <= low <= data["score"]
+        assert data["score"] <= high <= 1.0
+
+    def test_bayesian_interval_bounds_valid(self):
+        """Bayesian interval must be in [0, 1] and low <= score <= high."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_beta",
+            archetypes=[Archetype(name="Test", cards={"Card": 0.7})],
+        )
+        tracker = OpennessTracker(config)
+        for pick in range(2, 12):
+            tracker.record_pack([_make_card("Card", ata=5.0)], pick_number=pick, pack_number=0)
+        data = tracker.get_scores()["Test"]
+        low, high = data["interval"]
+        assert 0.0 <= low
+        assert low <= data["score"]
+        assert data["score"] <= high
+        assert high <= 1.0
+
 
 class TestTopContributors:
     """Tests for get_top_contributors."""

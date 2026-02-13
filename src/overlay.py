@@ -1740,7 +1740,12 @@ class Overlay(ScaledWindow):
 
             # Format score based on method
             if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
-                score_text = f"{score * 100:.0f}%"
+                interval = data.get("interval")
+                if interval is not None:
+                    half_width = (interval[1] - interval[0]) / 2 * 100
+                    score_text = f"{score * 100:.0f}% \u00b1{half_width:.0f}%"
+                else:
+                    score_text = f"{score * 100:.0f}%"
             else:
                 score_text = f"{score:+.1f}"
 
@@ -1748,7 +1753,7 @@ class Overlay(ScaledWindow):
                 self.openness_frame,
                 text=score_text,
                 anchor=tkinter.E,
-                width=6,
+                width=12,
                 fg=fg_color,
             )
             score_label.grid(row=i, column=1, padx=2)
@@ -1804,6 +1809,14 @@ class Overlay(ScaledWindow):
             lines = []
             for c in contributors:
                 lines.append(f"{c['card_name']}: pick {c['pick_number']}, ATA {c['ata']:.1f} -> {c['signal']:+.1f}")
+
+            # Append interval range for probabilistic methods
+            scores = self.openness_tracker.get_scores()
+            arch_data = scores.get(archetype_name, {})
+            interval = arch_data.get("interval")
+            if interval is not None:
+                lines.append(f"Range: {interval[0] * 100:.0f}% \u2013 {interval[1] * 100:.0f}%")
+
             tooltip_text = "\n".join(lines)
             self.__show_openness_tooltip(event, tooltip_text)
 

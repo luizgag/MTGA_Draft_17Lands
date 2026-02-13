@@ -194,6 +194,12 @@ class ArchetypeEditor:
                                     values=["linear", "sqrt", "squared"], width=8, state="readonly")
         curve_combo.pack(side=tkinter.LEFT, padx=4)
 
+        # Ramp field (shown for HMM Hybrid)
+        self.hmm_frame = ttk.Frame(self.conditional_frame)
+        ttk.Label(self.hmm_frame, text="Ramp:").pack(side=tkinter.LEFT, padx=(8, 0))
+        self.hmm_pick_ramp_var = tkinter.StringVar(value=str(self.config.hmm_pick_ramp))
+        ttk.Entry(self.hmm_frame, textvariable=self.hmm_pick_ramp_var, width=5).pack(side=tkinter.LEFT, padx=2)
+
         # Show correct conditional field on startup
         self._on_scoring_change()
 
@@ -394,11 +400,14 @@ class ArchetypeEditor:
         # Hide all conditional fields
         self.prior_frame.pack_forget()
         self.curve_frame.pack_forget()
+        self.hmm_frame.pack_forget()
 
         if internal == "bayesian_beta":
             self.prior_frame.pack(side=tkinter.LEFT)
         elif internal == "normalized":
             self.curve_frame.pack(side=tkinter.LEFT)
+        elif internal == "hmm_hybrid":
+            self.hmm_frame.pack(side=tkinter.LEFT)
 
     def _save(self):
         """Save current config to file and update archetype names/settings from UI."""
@@ -418,6 +427,10 @@ class ArchetypeEditor:
             self.config.bayesian_prior = float(self.prior_var.get())
         except ValueError:
             self.config.bayesian_prior = 1.0
+        try:
+            self.config.hmm_pick_ramp = int(self.hmm_pick_ramp_var.get())
+        except ValueError:
+            self.config.hmm_pick_ramp = 5
         try:
             self.config.card_weight_threshold = float(self.card_weight_threshold_var.get())
         except ValueError:
