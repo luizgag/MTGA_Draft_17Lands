@@ -94,6 +94,14 @@ cd Tools/TierScraper17Lands && npm install --save-dev jest-environment-jsdom && 
 
 **MTGO scanner**: Monitors a folder for `.txt` draft logs. Two-phase incremental parsing: file grows when pack is shown (overlay displays ratings), then again when pick is made (`-->` marker + `Picked:` line). Filename format: `{user}-{date}-{event}-{id}-{setcodes}.txt`. Set codes parsed as 3-char chunks from the suffix.
 
+**MTGO HindSight mode**: MTGO-only feature (`Settings.mtgo_hindsight_enabled`) that lets users load and review completed draft logs pick-by-pick. Core flow:
+1. `MtgoScanner.load_draft_file(filepath)` parses the header and calls `__build_pick_history(content)` to build an immutable list of pick state snapshots.
+2. Each history entry stores: `current_pack`, `current_pick_in_pack`, `current_pick`, `pack_cards` (display list minus picked card), `all_pack_cards` (full pack including picked card), `picked_card` (name of the card picked, empty for PACK_SHOWN), `initial_pack_cards`, `picked_cards_in_pack`, `taken_cards`, `state`.
+3. `navigate_history(offset)` moves forward/backward through the history, calling `__apply_history_state()` which copies the snapshot onto the scanner's live fields. In hindsight mode, `pack_cards` is set from `all_pack_cards` so the picked card is visible. `hindsight_picked_card` tracks which card was picked at the current position.
+4. `draft_data_search()` returns `False` immediately when `hindsight_mode=True` (no live scanning during review).
+5. The overlay UI shows a file dropdown and `←`/`→` arrow buttons (in `mtgo_hindsight_frame`). The pack table marks the picked card with a `→` prefix.
+6. **Archetype openness integration**: When enabled, the overlay replays all openness signals from pick 1 through the current history position on each navigation (`__replay_hindsight_openness()`), giving a "what would openness have shown at this point" view. The tracker is reset before each replay to avoid stale accumulation.
+
 ### Runtime directories (gitignored)
 `Archetypes/` (per-set archetype configs as JSON), `Debug/` (logs), `Downloads/`, `Logs/` (draft logs), `Screenshots/` (P1P1 OCR), `Sets/` (17Lands datasets as JSON), `Temp/`, `Tier/` (tier list data).
 

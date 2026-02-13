@@ -57,6 +57,7 @@ class MtgoScanner:
         self.current_pick_in_pack = 0
         self.draft_detected = False
         self.hindsight_mode = False
+        self.hindsight_picked_card = ""
         self.pick_history = []
         self.history_index = -1
 
@@ -619,6 +620,8 @@ class MtgoScanner:
                     "current_pick_in_pack": current_pick_in_pack,
                     "current_pick": (current_pack - 1) * 15 + current_pick_in_pack,
                     "pack_cards": shown_cards,
+                    "all_pack_cards": card_names[:],
+                    "picked_card": picked_card if picked_card else "",
                     "initial_pack_cards": initial_pack_cards[:],
                     "picked_cards_in_pack": picked_cards_in_pack[:],
                     "taken_cards": taken_cards[:],
@@ -643,7 +646,8 @@ class MtgoScanner:
         self.current_pack = state["current_pack"]
         self.current_pick_in_pack = state["current_pick_in_pack"]
         self.current_pick = state["current_pick"]
-        self.pack_cards = state["pack_cards"][:]
+        self.pack_cards = state.get("all_pack_cards", state["pack_cards"])[:]
+        self.hindsight_picked_card = state.get("picked_card", "")
         self.initial_pack_cards = state["initial_pack_cards"][:]
         self.picked_cards_in_pack = state["picked_cards_in_pack"][:]
         self.taken_cards = state["taken_cards"][:]

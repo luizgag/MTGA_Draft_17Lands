@@ -341,3 +341,105 @@ class TestHindsightNavigation:
 
         assert scanner_with_folder.history_index == len(scanner_with_folder.pick_history) - 1
         assert scanner_with_folder.navigate_history(1) is False
+
+
+class TestHindsightOpennessData:
+    """Test that history entries contain full pack data for openness replay."""
+
+    def test_all_pack_cards_field_present(self, scanner_with_folder):
+        """Every history entry should have the 'all_pack_cards' field."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        for i, entry in enumerate(scanner_with_folder.pick_history):
+            assert "all_pack_cards" in entry, f"Entry {i} missing 'all_pack_cards'"
+            assert isinstance(entry["all_pack_cards"], list)
+            assert len(entry["all_pack_cards"]) > 0
+
+    def test_all_pack_cards_includes_picked_card(self, scanner_with_folder):
+        """For PICK_MADE entries, 'all_pack_cards' must include the card that was picked."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        pick_made_entries = [
+            e for e in scanner_with_folder.pick_history
+            if e["state"] == MtgoScannerState.PICK_MADE
+        ]
+        assert len(pick_made_entries) > 0, "Expected at least one PICK_MADE entry"
+
+        for entry in pick_made_entries:
+            picked_cards_in_pack = entry["picked_cards_in_pack"]
+            if picked_cards_in_pack:
+                last_picked = picked_cards_in_pack[-1]
+                assert last_picked in entry["all_pack_cards"], (
+                    f"Picked card '{last_picked}' not in all_pack_cards"
+                )
+                assert last_picked not in entry["pack_cards"], (
+                    f"Picked card '{last_picked}' should not be in pack_cards"
+                )
+
+    def test_all_pack_cards_superset_of_pack_cards(self, scanner_with_folder):
+        """'all_pack_cards' should contain every card that's in 'pack_cards'."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        for i, entry in enumerate(scanner_with_folder.pick_history):
+            for card in entry["pack_cards"]:
+                assert card in entry["all_pack_cards"], (
+                    f"Entry {i}: card '{card}' in pack_cards but not in all_pack_cards"
+                )
+
+
+class TestHindsightPickedCard:
+    """Test that hindsight mode shows the picked card and sets hindsight_picked_card."""
+
+    def test_picked_card_field_in_history(self, scanner_with_folder):
+        """Every history entry should have a 'picked_card' field."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        for i, entry in enumerate(scanner_with_folder.pick_history):
+            assert "picked_card" in entry, f"Entry {i} missing 'picked_card'"
+
+    def test_pick_made_entries_have_picked_card(self, scanner_with_folder):
+        """PICK_MADE entries should have a non-empty picked_card."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        pick_made_entries = [
+            e for e in scanner_with_folder.pick_history
+            if e["state"] == MtgoScannerState.PICK_MADE
+        ]
+        assert len(pick_made_entries) > 0
+
+        for entry in pick_made_entries:
+            assert entry["picked_card"] != "", "PICK_MADE entry should have a picked_card"
+
+    def test_hindsight_picked_card_set_on_navigation(self, scanner_with_folder):
+        """hindsight_picked_card should be set when navigating history."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        # First entry should set hindsight_picked_card
+        first_entry = scanner_with_folder.pick_history[0]
+        assert scanner_with_folder.hindsight_picked_card == first_entry.get("picked_card", "")
+
+        # Navigate forward and verify it updates
+        scanner_with_folder.navigate_history(1)
+        second_entry = scanner_with_folder.pick_history[1]
+        assert scanner_with_folder.hindsight_picked_card == second_entry.get("picked_card", "")
+
+    def test_pack_cards_includes_picked_card_in_hindsight(self, scanner_with_folder):
+        """In hindsight mode, pack_cards on the scanner should include the picked card."""
+        files = scanner_with_folder.retrieve_draft_log_files()
+        assert scanner_with_folder.load_draft_file(files[0]) is True
+
+        pick_made_entries = [
+            (i, e) for i, e in enumerate(scanner_with_folder.pick_history)
+            if e["state"] == MtgoScannerState.PICK_MADE
+        ]
+        assert len(pick_made_entries) > 0
+
+        idx, entry = pick_made_entries[0]
+        scanner_with_folder.navigate_history(idx - scanner_with_folder.history_index)
+        assert entry["picked_card"] in scanner_with_folder.pack_cards

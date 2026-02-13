@@ -29,6 +29,7 @@ class ArchetypeConfig(BaseModel):
     opportunity_cost_decay: float = 0.1
     hmm_transition_decay: float = 0.15
     hmm_emission_scale: float = 1.0
+    hmm_openness_factor: float = 2.0
     rarity_odds: Dict[str, float] = Field(default_factory=lambda: {
         "common": 0.0899,
         "uncommon": 0.0388,
@@ -223,7 +224,7 @@ class OpennessTracker:
                     )
                     continue
 
-                if pick_number <= ata:
+                if pick_number <= ata and self.scoring_method != "hmm_hybrid":
                     logger.debug(
                         "    %s <- %s skipped (pick %.1f <= ATA %.1f)",
                         archetype.name,
@@ -314,29 +315,40 @@ class OpennessTracker:
             return self._scores_hmm_hybrid()
         return self._scores_simple()
 
-    def _rarity_appearance_prior(self, rarity: str) -> float:
-        """Approximate per-set probability a card appears in observed packs by rarity."""
-        rarity_key = (rarity or "").lower()
-        configured = self.config.rarity_odds.get(rarity_key)
-        if configured is None:
-            return 0.50
-        return max(0.0, min(1.0, configured))
 
     def _hmm_emission(self, card: Dict, pick_number: int, ata: float,
                       card_weight: float, pack_weight: float) -> float:
-        """Emission contribution to log-odds from one visible card."""
+        """Emission contribution to log-odds from one visible card.
 
-        rarity_prior = self._rarity_appearance_prior(card.get("rarity", ""))
-        pick_progress = max(0.0, min(1.0, (pick_number - 1) / 13.0))
+        Uses geometric survival model: each drafter has hazard rate h = 1/ATA.
+        Under the 'open' hypothesis, effective ATA = ATA * F (openness factor),
+        so cards survive longer because fewer neighbors draft the archetype.
 
-        # Exogenous term: commons/uncommons observed late are stronger evidence.
-        availability_term = rarity_prior * pick_progress
+        Log Bayes factor = (p-1) * [log(1 - 1/(a*F)) - log(1 - 1/a)]
 
-        # Behavioral term: how surprising this pick is relative to ATA.
-        ata_term = (pick_number - ata) / (pick_number + ata)
+        This is always >= 0 when F >= 1: every observation weakly supports 'open'.
+        Magnitude increases with pick position and decreases with ATA.
+        """
+        # Clamp ATA to minimum 1.5 to avoid log(0) when a <= 1
+        a = max(1.5, ata)
+        F = max(1.0, self.config.hmm_openness_factor)
+        p = pick_number
+
+        # Geometric survival log Bayes factor
+        log_bf = (p - 1) * (math.log(1.0 - 1.0 / (a * F)) - math.log(1.0 - 1.0 / a))
+
+        # Rarity reliability weight: rarer cards provide less reliable
+        # table-behavior signals because fewer copies exist in the draft pool.
+        common_odds = self.config.rarity_odds.get("common", 0.0899)
+        card_rarity = (card.get("rarity", "") or "").lower()
+        card_odds = self.config.rarity_odds.get(card_rarity, common_odds)
+        if common_odds > 0:
+            rarity_weight = math.sqrt(card_odds / common_odds)
+        else:
+            rarity_weight = 1.0
 
         scale = self.config.hmm_emission_scale
-        return (availability_term + ata_term) * card_weight * pack_weight * scale
+        return log_bf * card_weight * pack_weight * rarity_weight * scale
 
     def _hmm_update_state(self, archetype_name: str, pick_number: int, emission: float) -> None:
         """One-step HMM-like state update in log-odds space."""

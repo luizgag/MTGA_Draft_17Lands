@@ -344,6 +344,146 @@ class TestOpennessTrackerHMMHybrid:
         tracker.reset()
         assert tracker.get_scores()["BG Elves"]["score"] == pytest.approx(0.5)
 
+    def test_hmm_below_ata_produces_signal(self):
+        """Card seen BEFORE its ATA should still produce a small positive signal for HMM.
+
+        ATA 5.0 at pick 4: the card hasn't wheeled past ATA yet, but seeing it
+        at pick 4 is still slightly more consistent with 'open' than 'closed'.
+        log_bf = (4-1) * [log(1 - 1/(5*2)) - log(1 - 1/5)]
+               = 3 * [log(0.9) - log(0.8)]
+               = 3 * (-0.10536 - (-0.22314))
+               = 3 * 0.11778
+               = 0.35335
+        sigmoid(0.35335) ≈ 0.587  -->  score > 0.5
+        """
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=5.0)], pick_number=4, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert score > 0.5
+        assert score < 0.7  # should be modest, not extreme
+
+    def test_hmm_borderline_vs_expected(self):
+        """ATA 4.1 at pick 4 should produce stronger signal than ATA 10 at pick 4.
+
+        ATA 4.1 card is borderline (almost wheeling) — more informative.
+        ATA 10 card is completely expected to still be here — less informative.
+        """
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Borderline": 1.0, "Expected": 1.0})],
+        )
+        tracker1 = OpennessTracker(config)
+        tracker1.record_pack([_make_card("Borderline", ata=4.1)], pick_number=4, pack_number=0)
+        score_borderline = tracker1.get_scores()["Test"]["score"]
+
+        tracker2 = OpennessTracker(config)
+        tracker2.record_pack([_make_card("Expected", ata=10.0)], pick_number=4, pack_number=0)
+        score_expected = tracker2.get_scores()["Test"]["score"]
+
+        assert score_borderline > score_expected
+
+    def test_hmm_emission_scales_with_pick(self):
+        """Same card at a later pick should produce stronger signal.
+
+        The log Bayes factor is proportional to (pick - 1), so pick 10 should
+        produce about 3x the signal of pick 4 (9/3 = 3).
+        """
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker_early = OpennessTracker(config)
+        tracker_early.record_pack([_make_card("Card", ata=5.0)], pick_number=4, pack_number=0)
+        score_early = tracker_early.get_scores()["Test"]["score"]
+
+        tracker_late = OpennessTracker(config)
+        tracker_late.record_pack([_make_card("Card", ata=5.0)], pick_number=10, pack_number=0)
+        score_late = tracker_late.get_scores()["Test"]["score"]
+
+        assert score_late > score_early
+
+    def test_hmm_exact_bayes_factor(self):
+        """Verify exact emission value for known inputs.
+
+        ATA=3.0, pick=7, F=2.0, card_weight=0.9, common rarity (weight=1.0):
+        a = 3.0, p = 7
+        log_bf = 6 * [log(1 - 1/6) - log(1 - 1/3)]
+               = 6 * [log(5/6) - log(2/3)]
+               = 6 * [-0.18232 - (-0.40546)]
+               = 6 * 0.22314
+               = 1.33886
+        emission = 1.33886 * 0.9 * 1.0 * 1.0 * 1.0 = 1.20497
+        P(open) = sigmoid(1.20497) = 1/(1+exp(-1.20497)) ≈ 0.7693
+        """
+        import math
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 0.9})],
+        )
+        tracker = OpennessTracker(config)
+        card = _make_card("Card", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=7, pack_number=0)
+
+        log_bf = 6 * (math.log(1 - 1/6) - math.log(1 - 1/3))
+        expected_emission = log_bf * 0.9
+        expected_score = 1.0 / (1.0 + math.exp(-expected_emission))
+
+        score = tracker.get_scores()["Test"]["score"]
+        assert score == pytest.approx(expected_score, abs=0.001)
+
+    def test_hmm_openness_factor_config(self):
+        """hmm_openness_factor defaults to 2.0 and round-trips."""
+        config = ArchetypeConfig(set_code="TST")
+        assert config.hmm_openness_factor == 2.0
+
+        # Old config without the field gets the default
+        data = {"set_code": "TST", "scoring_method": "hmm_hybrid"}
+        config2 = ArchetypeConfig.model_validate(data)
+        assert config2.hmm_openness_factor == 2.0
+
+    def test_hmm_openness_factor_round_trip(self, tmp_path):
+        """hmm_openness_factor persists through save/load."""
+        config = ArchetypeConfig(set_code="TST", hmm_openness_factor=3.0)
+        file_path = str(tmp_path / "test_config.json")
+        save_archetype_config(config, file_path)
+        loaded = load_archetype_config(file_path)
+        assert loaded.hmm_openness_factor == 3.0
+
+    def test_hmm_ata_clamp(self):
+        """ATA=1.0 should not cause math domain error; clamped to 1.5."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=1.0)], pick_number=5, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert 0.0 <= score <= 1.0
+        assert score > 0.5  # ATA 1.0 at pick 5 is very strong
+
+    def test_hmm_pick_1_still_no_signal(self):
+        """Pick 1 should still produce no signal even with HMM hybrid."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="hmm_hybrid",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        tracker.record_pack([_make_card("Card", ata=3.0)], pick_number=1, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert score == pytest.approx(0.5)  # no change from prior
+
+
 class TestTopContributors:
     """Tests for get_top_contributors."""
 
@@ -580,13 +720,13 @@ class TestRarityOddsConfig:
 
     def test_default_rarity_odds(self):
         config = ArchetypeConfig(set_code="TST")
-        assert config.rarity_odds["common"] == pytest.approx(0.85)
-        assert config.rarity_odds["mythic"] == pytest.approx(0.20)
+        assert config.rarity_odds["common"] == pytest.approx(0.0899)
+        assert config.rarity_odds["mythic"] == pytest.approx(0.0055)
 
     def test_old_config_without_rarity_odds_gets_default(self):
         data = {"set_code": "TST", "scoring_method": "hmm_hybrid"}
         config = ArchetypeConfig.model_validate(data)
-        assert config.rarity_odds["uncommon"] == pytest.approx(0.60)
+        assert config.rarity_odds["uncommon"] == pytest.approx(0.0388)
 
     def test_rarity_odds_round_trip(self, tmp_path):
         config = ArchetypeConfig(

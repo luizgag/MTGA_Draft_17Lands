@@ -792,6 +792,13 @@ class Overlay(ScaledWindow):
                 result_list = sorted(result_list, key=lambda d: field_process_sort(
                     d["results"][last_field_index]), reverse=True)
 
+            # Mark the picked card with an arrow in hindsight mode
+            if self.draft.hindsight_mode and self.draft.hindsight_picked_card:
+                for card in result_list:
+                    if card["results"][0] == self.draft.hindsight_picked_card:
+                        card["results"][0] = f"→ {card['results'][0]}"
+                        break
+
             for count, card in enumerate(result_list):
                 row_tag = self._identify_card_row_tag(
                     self.configuration.settings,
@@ -1359,26 +1366,50 @@ class Overlay(ScaledWindow):
                         mean,
                         std)
 
-            # Initialize openness tracker
-            if self.configuration.features.archetype_openness_enabled:
-                set_code = self.draft.draft_sets[0] if self.draft.draft_sets else ""
-                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
-                archetype_config = load_archetype_config(config_path)
-                if archetype_config:
-                    self.openness_tracker = OpennessTracker(archetype_config)
-                    self.openness_frame.grid()
-                else:
-                    self.openness_tracker = None
-                    self.openness_frame.grid_remove()
-            else:
-                self.openness_tracker = None
-                self.openness_frame.grid_remove()
+            self.__init_openness_tracker()
 
         use_ocr = source == Source.REFRESH and self.configuration.settings.p1p1_ocr_enabled
         if self.draft.draft_data_search(use_ocr, self.configuration.settings.save_screenshot_enabled):
             update = True
 
         return update
+
+    def __init_openness_tracker(self):
+        """Initialize or re-initialize the openness tracker for the current draft set."""
+        if self.configuration.features.archetype_openness_enabled:
+            set_code = self.draft.draft_sets[0] if self.draft.draft_sets else ""
+            config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
+            archetype_config = load_archetype_config(config_path)
+            if archetype_config:
+                self.openness_tracker = OpennessTracker(archetype_config)
+                self.openness_frame.grid()
+            else:
+                self.openness_tracker = None
+                self.openness_frame.grid_remove()
+        else:
+            self.openness_tracker = None
+            self.openness_frame.grid_remove()
+
+    def __replay_hindsight_openness(self):
+        """Reset and replay openness signals from beginning through current hindsight position."""
+        if not self.openness_tracker or not self.draft.hindsight_mode:
+            return
+
+        self.openness_tracker.reset()
+
+        for i in range(self.draft.history_index + 1):
+            entry = self.draft.pick_history[i]
+            all_names = entry.get("all_pack_cards", [])
+            if not all_names:
+                continue
+            pack_cards_data = self.draft.set_data.get_data_by_name(all_names)
+            if not pack_cards_data:
+                continue
+            pick_in_pack = entry["current_pick_in_pack"]
+            pack_number = entry["current_pack"] - 1
+            self.openness_tracker.record_pack(pack_cards_data, pick_in_pack, pack_number)
+
+        self.__update_openness_panel()
 
     def __update_settings_storage(self):
         '''Function that transfers settings data from the overlay widgets to a data class'''
@@ -1640,10 +1671,13 @@ class Overlay(ScaledWindow):
                                  fields)
 
         # Update openness scoring
-        if self.openness_tracker and pack_cards and not (self.draft.hindsight_mode and source == Source.REFRESH):
-            pick_in_pack = self.draft.retrieve_current_pick_in_pack()
-            self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
-            self.__update_openness_panel()
+        if self.openness_tracker and pack_cards:
+            if self.draft.hindsight_mode:
+                self.__replay_hindsight_openness()
+            else:
+                pick_in_pack = self.draft.retrieve_current_pick_in_pack()
+                self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
+                self.__update_openness_panel()
 
         self.__update_missing_table(missing_cards,
                                     picked_cards,
@@ -1808,11 +1842,9 @@ class Overlay(ScaledWindow):
 
         def on_save():
             """Reload archetype config after save."""
-            if self.configuration.features.archetype_openness_enabled:
-                config_path = os.path.join(constants.ARCHETYPES_FOLDER, f"{set_code}_archetypes.json")
-                archetype_config = load_archetype_config(config_path)
-                if archetype_config:
-                    self.openness_tracker = OpennessTracker(archetype_config)
+            self.__init_openness_tracker()
+            if self.draft.hindsight_mode:
+                self.__replay_hindsight_openness()
 
         from src.archetype_editor import ArchetypeEditor
         ArchetypeEditor(
@@ -1907,6 +1939,7 @@ class Overlay(ScaledWindow):
         self.data_sources = self.draft.retrieve_data_sources()
         self.__update_data_source_options(True)
         self.__update_draft_data()
+        self.__init_openness_tracker()
         self.__update_overlay_callback(False)
 
     def __navigate_mtgo_history(self, direction):
