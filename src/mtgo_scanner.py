@@ -216,12 +216,23 @@ class MtgoScanner:
             self.file_size = current_size
 
             with open(self.current_file, 'r', encoding='utf-8', errors='replace') as f:
-                f.seek(self.search_offset)
-                new_content = f.read()
-                self.search_offset = f.tell()
+                # Re-read entire file — MTGO modifies existing lines in-place
+                # (adding --> pick marker), so incremental parsing misses picks
+                content = f.read()
+                self.search_offset = len(content)
 
-            if new_content:
-                update = self.__parse_draft_content(new_content)
+            if content:
+                # Reset parsing state before full re-parse
+                self.taken_cards = []
+                self.current_pack = 0
+                self.current_pick = 0
+                self.current_pick_in_pack = 0
+                self.picked_cards_in_pack = []
+                self.initial_pack_cards = []
+                self.pack_cards = []
+                self.state = MtgoScannerState.WAITING
+
+                update = self.__parse_draft_content(content)
 
         except Exception as error:
             logger.error(error)

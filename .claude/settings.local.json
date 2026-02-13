@@ -38,7 +38,8 @@
       "WebFetch(domain:creators.spotify.com)",
       "WebFetch(domain:www.tcgplayer.com)",
       "Bash(python3:*)",
-      "Bash(.venv/bin/pytest:*)"
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(DISPLAY=:99 .venv/bin/pytest:*)"
     ]
   }
 }

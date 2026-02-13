@@ -221,6 +221,62 @@ Picked: Card Epsilon
         assert "Card Epsilon" in scanner.taken_cards
         assert scanner.state == MtgoScannerState.PICK_MADE
 
+    def test_inplace_pick_marker_detected(self, tmp_path):
+        """MTGO modifies existing lines in-place to add --> pick marker.
+
+        Phase 1: File has pack block without pick marker.
+        Phase 2: MTGO rewrites the SAME pack block adding --> to the picked card
+                 and appends 'Picked:' line. No new pack header is added.
+        The scanner must detect the pick even though the --> marker is in content
+        that was already read.
+        """
+        # Phase 1: Pack shown, no pick
+        phase1_content = """Event #: 10252
+Time:    2/6/2026 8:14:11 PM
+Players:
+    Player1
+--> TestHero
+
+Pack 1 pick 1:
+    Card Alpha
+    Card Beta
+    Card Gamma
+"""
+        log_file = tmp_path / "test-2026.2.6-10252-12345678-ECLECLECL.txt"
+        log_file.write_text(phase1_content)
+
+        scanner = MtgoScanner(str(tmp_path), TEST_SETS)
+        scanner.draft_start_search()
+
+        assert scanner.state == MtgoScannerState.PACK_SHOWN
+        assert len(scanner.taken_cards) == 0
+
+        # Phase 2: MTGO rewrites the file — same pack block now has --> marker
+        # and a Picked: line is appended. The file grows but the pick marker
+        # is in content BEFORE the old search_offset.
+        phase2_content = """Event #: 10252
+Time:    2/6/2026 8:14:11 PM
+Players:
+    Player1
+--> TestHero
+
+Pack 1 pick 1:
+    Card Alpha
+--> Card Beta
+    Card Gamma
+
+Picked: Card Beta
+"""
+        log_file.write_text(phase2_content)
+
+        result = scanner.draft_data_search()
+        assert result is True
+        assert scanner.state == MtgoScannerState.PICK_MADE
+        assert "Card Beta" in scanner.taken_cards
+        assert "Card Beta" not in scanner.pack_cards
+        assert "Card Alpha" in scanner.pack_cards
+        assert "Card Gamma" in scanner.pack_cards
+
 
 class TestPackTransitions:
     """Test pack number transitions"""
