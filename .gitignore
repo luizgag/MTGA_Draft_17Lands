@@ -181,3 +181,6 @@ cython_debug/
 
 # Repomix for outputing files: repomix --ignore "tests/data/**"
 repomix-output.txt
+
+# Temporary Claude workspace files
+tmpclaude-*-cwd
