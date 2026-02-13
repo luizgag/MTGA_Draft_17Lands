@@ -394,6 +394,7 @@ class Overlay(ScaledWindow):
                                             command=self.__on_mtgo_file_selected)
         menu = self.root.nametowidget(self.mtgo_file_options['menu'])
         menu.config(font=self.fonts_dict["All.TMenubutton"])
+        self.mtgo_file_options.config(width=15)
 
         self.separator_frame_draft = Separator(self.root, orient='horizontal')
         self.status_frame = tkinter.Frame(self.root)
@@ -492,6 +493,8 @@ class Overlay(ScaledWindow):
         footnote_label.grid(row=17, column=0, columnspan=2)
 
         self.root.bind("<Configure>", self.__on_window_resize)
+        self.root.bind("<Left>", lambda e: self.__navigate_mtgo_history(-1))
+        self.root.bind("<Right>", lambda e: self.__navigate_mtgo_history(1))
 
         self.refresh_button.pack(expand=True, fill="both")
 
