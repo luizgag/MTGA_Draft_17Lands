@@ -166,6 +166,7 @@ class ArchetypeEditor:
             "Bayesian (%)": "bayesian_beta",
             "HMM Hybrid (%)": "hmm_hybrid",
             "Bayesian Survival": "bayesian_survival",
+            "Simple_ALSA": "simple_alsa"
         }
         self._scoring_internal_map = {v: k for k, v in self._scoring_display_map.items()}
 

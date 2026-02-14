@@ -1589,18 +1589,20 @@ class TestBayesianSurvivalMissing:
         expected = first * decay + missing_emission
         assert combined == pytest.approx(expected, abs=0.01)
 
-    def test_missing_only_for_bayesian_survival(self):
-        """record_missing should be a no-op for other scoring methods."""
-        config = ArchetypeConfig(
-            set_code="TST",
-            scoring_method="simple",
-            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
-        )
-        tracker = OpennessTracker(config)
-        card = _make_card("Card", ata=10.0)
-        card["rarity"] = "common"
-        tracker.record_missing([card], pick_number=9, pack_number=0)
-        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+    def test_missing_noop_for_unsupported_methods(self):
+        """record_missing should be a no-op for methods that don't support it."""
+        for method in ["simple", "normalized", "bayesian_beta", "hmm_hybrid"]:
+            config = ArchetypeConfig(
+                set_code="TST",
+                scoring_method=method,
+                archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+            )
+            tracker = OpennessTracker(config)
+            baseline = tracker.get_scores()["Test"]["score"]
+            card = _make_card("Card", ata=10.0)
+            card["rarity"] = "common"
+            tracker.record_missing([card], pick_number=9, pack_number=0)
+            assert tracker.get_scores()["Test"]["score"] == pytest.approx(baseline)
 
 
 class TestBayesianSurvivalAbsence:
@@ -1898,3 +1900,99 @@ class TestBayesianSurvivalEdgeCases:
             scores = tracker.get_scores()
             assert "Test" in scores
             assert "score" in scores["Test"]
+
+
+class TestSimpleAlsaMissing:
+    """Tests for simple_alsa negative signals from missing (non-wheeling) cards."""
+
+    def _make_config(self, **kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="simple_alsa",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_missing_produces_negative_signal(self):
+        """A missing card should produce a negative openness signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=5.0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert score < 0.0
+
+    def test_missing_exact_formula(self):
+        """Verify exact formula: -(1/ata) * card_weight * pack_weight * 100."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=4.0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        expected = -(1.0 / 4.0) * 1.0 * 1.0 * 100  # -25.0
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(expected)
+
+    def test_low_ata_stronger_negative_than_high_ata(self):
+        """Low ATA (strong card) produces stronger negative signal than high ATA."""
+        tracker_low = OpennessTracker(self._make_config())
+        card_low = _make_card("Card", ata=2.0)
+        tracker_low.record_missing([card_low], pick_number=9, pack_number=0)
+
+        tracker_high = OpennessTracker(self._make_config())
+        card_high = _make_card("Card", ata=10.0)
+        tracker_high.record_missing([card_high], pick_number=9, pack_number=0)
+
+        # Both negative, but low ATA should be MORE negative (stronger penalty)
+        assert tracker_low.get_scores()["Test"]["score"] < tracker_high.get_scores()["Test"]["score"] < 0.0
+
+    def test_card_weight_scales_signal(self):
+        """Higher card_weight produces stronger negative signal."""
+        config_low = self._make_config(
+            archetypes=[Archetype(name="Test", cards={"Card": 0.3})])
+        tracker_low = OpennessTracker(config_low)
+        card = _make_card("Card", ata=5.0)
+        tracker_low.record_missing([card], pick_number=9, pack_number=0)
+
+        config_high = self._make_config(
+            archetypes=[Archetype(name="Test", cards={"Card": 0.9})])
+        tracker_high = OpennessTracker(config_high)
+        tracker_high.record_missing([card], pick_number=9, pack_number=0)
+
+        # Higher card_weight -> more negative
+        assert tracker_high.get_scores()["Test"]["score"] < tracker_low.get_scores()["Test"]["score"]
+
+    def test_pack_weight_scales_signal(self):
+        """Pack weight multiplies the negative signal."""
+        config = self._make_config(pack_weights=[2.0, 1.0, 1.0])
+        tracker = OpennessTracker(config)
+        card = _make_card("Card", ata=5.0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        expected = -(1.0 / 5.0) * 1.0 * 2.0 * 100  # -40.0
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(expected)
+
+    def test_missing_card_not_in_archetype_ignored(self):
+        """Cards not in any archetype produce no signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Unknown Card", ata=5.0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_missing_zero_ata_skipped(self):
+        """Cards with ATA=0 produce no signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=0.0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_positive_and_negative_combine(self):
+        """Positive wheeling signals and negative missing signals combine."""
+        tracker = OpennessTracker(self._make_config())
+        # Positive: card seen at pick 5, ALSA=3.0 -> positive signal
+        card = _make_card("Card", ata=5.0)
+        card["deck_colors"]["All Decks"]["alsa"] = 3.0
+        tracker.record_pack([card], pick_number=5, pack_number=0)
+        score_positive = tracker.get_scores()["Test"]["score"]
+        assert score_positive > 0.0
+
+        # Negative: same card missing from a different pack at pick 9
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        score_combined = tracker.get_scores()["Test"]["score"]
+        assert score_combined < score_positive
