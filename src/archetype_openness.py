@@ -177,6 +177,8 @@ class OpennessTracker:
         self.bs_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
         self.bs_card_seen: Dict[str, Dict[str, int]] = {arch.name: {} for arch in self.archetypes}
         self.bs_packs_observed: int = 0
+        self._bs_card_rarity: Dict[str, str] = {}
+        self._bs_card_ata: Dict[str, float] = {}
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -290,6 +292,13 @@ class OpennessTracker:
             self.bs_packs_observed += 1
             for card in pack_cards:
                 card_name = card.get(DATA_FIELD_NAME, "")
+                # Cache rarity and ATA for absence calculation
+                if card_name not in self._bs_card_rarity:
+                    self._bs_card_rarity[card_name] = (card.get("rarity", "") or "").lower()
+                    deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+                    all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+                    self._bs_card_ata[card_name] = all_decks.get(DATA_FIELD_ATA, 0.0)
+
                 for archetype in self.archetypes:
                     if card_name in archetype.cards:
                         seen = self.bs_card_seen.get(archetype.name, {})
@@ -438,15 +447,74 @@ class OpennessTracker:
         prev_sum_sq = self.bs_sum_sq.get(archetype_name, 0.0)
         self.bs_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
 
+    def _bs_absence_signal(self, archetype: Archetype) -> float:
+        """Signal 3: Draft-wide absence signal for all cards in an archetype.
+
+        For each card, computes:
+        lambda = k * log(see_open/see_closed) + (N - k) * log((1 - see_open)/(1 - see_closed))
+        where see_H = r * q_H^(p_avg - 1).
+        """
+        if not self.config.absence_enabled or self.bs_packs_observed == 0:
+            return 0.0
+
+        N = self.bs_packs_observed
+        p_avg = 7.5  # approximate midpoint of 1-14
+        F = max(1.0, self.config.hmm_openness_factor)
+        total_signal = 0.0
+
+        for card_name, card_weight in archetype.cards.items():
+            # Use cached rarity/ATA, with defaults for never-seen cards
+            card_rarity = self._bs_card_rarity.get(card_name, "common")
+            card_ata = self._bs_card_ata.get(card_name, 5.0)
+
+            r_odds = self.config.rarity_odds.get(card_rarity, 0.0899)
+            slots = self.config.slots_per_rarity.get(card_rarity, 0)
+            r = r_odds * slots
+
+            if r <= 0 or card_ata == 0.0:
+                continue
+
+            a = max(1.5, card_ata)
+            q_open = 1.0 - 1.0 / (a * F)
+            q_closed = 1.0 - 1.0 / a
+
+            see_open = r * (q_open ** (p_avg - 1))
+            see_closed = r * (q_closed ** (p_avg - 1))
+
+            # Clamp to avoid log(0)
+            see_open = min(max(see_open, 1e-10), 1.0 - 1e-10)
+            see_closed = min(max(see_closed, 1e-10), 1.0 - 1e-10)
+
+            k = self.bs_card_seen.get(archetype.name, {}).get(card_name, 0)
+
+            signal = (k * math.log(see_open / see_closed)
+                      + (N - k) * math.log((1 - see_open) / (1 - see_closed)))
+            total_signal += signal * card_weight
+
+        return total_signal
+
     def _scores_bayesian_survival(self) -> Dict[str, dict]:
-        """Bayesian survival scoring — returns log-odds with credible interval."""
+        """Bayesian survival scoring — log-odds with absence signal and credible interval."""
         scores = {}
         for arch in self.archetypes:
             log_odds = self.bs_log_odds.get(arch.name, 0.0)
+
+            # Add absence signal
+            absence = self._bs_absence_signal(arch)
+            total_log_odds = log_odds + absence
+
+            # Variance estimation
+            sum_sq = self.bs_sum_sq.get(arch.name, 0.0)
+            if sum_sq > 0:
+                sigma = math.sqrt(sum_sq)
+                interval = (total_log_odds - 1.96 * sigma, total_log_odds + 1.96 * sigma)
+            else:
+                interval = None
+
             scores[arch.name] = {
-                "score": log_odds,
+                "score": total_log_odds,
                 "confidence": self._confidence_level(arch.name),
-                "interval": None,
+                "interval": interval,
             }
         return scores
 
@@ -636,3 +704,5 @@ class OpennessTracker:
         self.bs_last_pick = {arch.name: 1 for arch in self.archetypes}
         self.bs_card_seen = {arch.name: {} for arch in self.archetypes}
         self.bs_packs_observed = 0
+        self._bs_card_rarity = {}
+        self._bs_card_ata = {}

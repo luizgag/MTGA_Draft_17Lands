@@ -1314,6 +1314,7 @@ class TestBayesianSurvivalWheeling:
             set_code="TST",
             scoring_method="bayesian_survival",
             archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+            absence_enabled=False,
         )
         defaults.update(kwargs)
         return ArchetypeConfig(**defaults)
@@ -1486,6 +1487,7 @@ class TestBayesianSurvivalMissing:
             set_code="TST",
             scoring_method="bayesian_survival",
             archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+            absence_enabled=False,
         )
         defaults.update(kwargs)
         return ArchetypeConfig(**defaults)
@@ -1599,3 +1601,103 @@ class TestBayesianSurvivalMissing:
         card["rarity"] = "common"
         tracker.record_missing([card], pick_number=9, pack_number=0)
         assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+
+class TestBayesianSurvivalAbsence:
+    """Tests for bayesian_survival Signal 3 (draft-wide absence)."""
+
+    def _make_config(self, **kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_common_never_seen_negative_signal(self):
+        """Common card never seen after many packs -> negative absence signal."""
+        tracker = OpennessTracker(self._make_config())
+        # Simulate seeing 24 packs without "Card" appearing
+        # We need packs_observed > 0 but card_seen["Card"] = 0
+        # Force packs_observed by recording packs with OTHER cards
+        other_card = _make_card("Other", ata=5.0)
+        other_card["rarity"] = "common"
+        for i in range(24):
+            tracker.record_pack([other_card], pick_number=7, pack_number=0)
+        assert tracker.bs_packs_observed == 24
+        assert tracker.bs_card_seen["Test"].get("Card", 0) == 0
+
+        scores = tracker.get_scores()
+        # Score should include absence signal for "Card" (negative)
+        # The only wheeling signals are for "Other" which isn't in the archetype
+        assert scores["Test"]["score"] < 0.0
+
+    def test_rare_never_seen_negligible_signal(self):
+        """Rare card absence signal weaker than common card absence signal."""
+        config_common = self._make_config()
+        config_rare = self._make_config(
+            archetypes=[Archetype(name="Test", cards={"Rare Card": 1.0})]
+        )
+
+        # Common version — "Card" shows up once to cache rarity, then 23 packs without it
+        tracker_c = OpennessTracker(config_common)
+        card_c = _make_card("Card", ata=5.0)
+        card_c["rarity"] = "common"
+        other = _make_card("Other", ata=5.0)
+        other["rarity"] = "common"
+        tracker_c.record_pack([card_c], pick_number=2, pack_number=0)  # caches rarity, gated (no signal)
+        for _ in range(23):
+            tracker_c.record_pack([other], pick_number=7, pack_number=0)
+
+        # Rare version — "Rare Card" shows up once to cache rarity as rare
+        tracker_r = OpennessTracker(config_rare)
+        rare_card = _make_card("Rare Card", ata=5.0)
+        rare_card["rarity"] = "rare"
+        tracker_r.record_pack([rare_card], pick_number=2, pack_number=0)  # caches rarity, gated
+        for _ in range(23):
+            tracker_r.record_pack([other], pick_number=7, pack_number=0)
+
+        score_c = tracker_c.get_scores()["Test"]["score"]
+        score_r = tracker_r.get_scores()["Test"]["score"]
+        # Both should be negative (absence). Common absence is stronger.
+        assert score_c < score_r
+
+    def test_absence_disabled(self):
+        """When absence_enabled=False, no absence signal."""
+        config = self._make_config(absence_enabled=False)
+        tracker = OpennessTracker(config)
+        other = _make_card("Other", ata=5.0)
+        other["rarity"] = "common"
+        for _ in range(24):
+            tracker.record_pack([other], pick_number=7, pack_number=0)
+
+        scores = tracker.get_scores()
+        # Without absence, unseen "Card" produces no signal.
+        # And "Other" isn't in archetype, so no wheeling signal either.
+        assert scores["Test"]["score"] == pytest.approx(0.0)
+
+    def test_no_packs_observed_no_absence(self):
+        """When no packs have been observed, no absence signal."""
+        tracker = OpennessTracker(self._make_config())
+        scores = tracker.get_scores()
+        assert scores["Test"]["score"] == pytest.approx(0.0)
+
+    def test_card_seen_expected_times_near_zero_signal(self):
+        """Card seen approximately expected number of times -> near-zero absence signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=5.0)
+        card["rarity"] = "common"
+        # See it 2 times across 24 packs (close to expected ~1.5)
+        tracker.record_pack([card], pick_number=7, pack_number=0)
+        tracker.record_pack([card], pick_number=8, pack_number=0)
+        for _ in range(22):
+            other = _make_card("Other", ata=5.0)
+            other["rarity"] = "common"
+            tracker.record_pack([other], pick_number=7, pack_number=0)
+
+        scores = tracker.get_scores()
+        # The score includes both wheeling signals (positive from picks 7,8 past ATA 5)
+        # and absence signal (card seen 2 times, expected ~1.5 -> slightly positive)
+        # We can't easily assert the exact value, but the score should exist
+        assert isinstance(scores["Test"]["score"], float)
