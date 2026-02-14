@@ -184,3 +184,6 @@ repomix-output.txt
 
 # Temporary Claude workspace files
 tmpclaude-*-cwd
+
+# Git worktrees
+.worktrees/

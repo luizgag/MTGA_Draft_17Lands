@@ -39,7 +39,26 @@
       "WebFetch(domain:www.tcgplayer.com)",
       "Bash(python3:*)",
       "Bash(.venv/bin/pytest:*)",
-      "Bash(DISPLAY=:99 .venv/bin/pytest:*)"
+      "Bash(DISPLAY=:99 .venv/bin/pytest:*)",
+      "WebFetch(domain:www.alignmentforum.org)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:ocw.mit.edu)",
+      "WebFetch(domain:ieee-cog.org)",
+      "Bash(git worktree:*)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianSurvivalConfig -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianSurvivalState -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianSurvivalWheeling -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianSurvivalMissing -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/test_archetype_openness.py::TestBayesianSurvivalAbsence -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalAbsence -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalWheeling::test_card_at_ata_produces_no_signal /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalWheeling::test_card_before_ata_produces_no_signal /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalWheeling::test_exact_wheeling_formula -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalIntegration -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/ -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalEdgeCases -v)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/)"
     ]
   }
 }
