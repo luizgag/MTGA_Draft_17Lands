@@ -450,6 +450,76 @@ class OpennessTracker:
             }
         return scores
 
+    def _bs_missing_emission(self, card: Dict, pick_number: int, ata: float,
+                             card_weight: float, pack_weight: float) -> float:
+        """Signal 2: Log Bayes factor for a missing card (taken before pick p).
+
+        lambda = log((1 - S_open) / (1 - S_closed))
+        where S_H = q_H^(p-1). Always <= 0.
+        """
+        a = max(1.5, ata)
+        F = max(1.0, self.config.hmm_openness_factor)
+        p = pick_number
+
+        q_open = 1.0 - 1.0 / (a * F)
+        q_closed = 1.0 - 1.0 / a
+
+        S_open = q_open ** (p - 1)
+        S_closed = q_closed ** (p - 1)
+
+        taken_open = max(1e-10, 1.0 - S_open)
+        taken_closed = max(1e-10, 1.0 - S_closed)
+        log_bf = math.log(taken_open / taken_closed)
+
+        common_odds = self.config.rarity_odds.get("common", 0.0899)
+        card_rarity = (card.get("rarity", "") or "").lower()
+        card_odds = self.config.rarity_odds.get(card_rarity, common_odds)
+        rarity_weight = math.sqrt(card_odds / common_odds) if common_odds > 0 else 1.0
+
+        scale = self.config.hmm_emission_scale
+        ramp = self._hmm_pick_ramp_factor(pick_number)
+        return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
+
+    def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
+        """Record negative signals from missing cards (Signal 2).
+
+        Only active for bayesian_survival scoring method.
+
+        Args:
+            missing_cards: list of card dicts that were in original pack but are now gone
+            pick_number: 1-based pick position within the pack
+            pack_number: 0-indexed pack number
+        """
+        if self.scoring_method != "bayesian_survival":
+            return
+
+        pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
+
+        for card in missing_cards:
+            card_name = card.get(DATA_FIELD_NAME, "")
+            deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+            all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+            ata = all_decks.get(DATA_FIELD_ATA, 0.0)
+
+            if ata == 0.0:
+                continue
+
+            for archetype in self.archetypes:
+                if card_name not in archetype.cards:
+                    continue
+
+                card_weight = archetype.cards[card_name]
+                emission = self._bs_missing_emission(card, pick_number, ata, card_weight, pack_weight)
+                self._bs_update_state(archetype.name, pick_number, emission)
+
+                self.signals.append({
+                    "archetype": archetype.name,
+                    "card_name": card_name,
+                    "pick_number": pick_number,
+                    "ata": ata,
+                    "signal": emission,
+                })
+
     def _scores_hmm_hybrid(self) -> Dict[str, dict]:
         """HMM-inspired hybrid score returned as posterior P(open).
 

@@ -1476,3 +1476,126 @@ class TestBayesianSurvivalWheeling:
         assert tracker.bs_packs_observed == 1
         tracker.record_pack([card], pick_number=8, pack_number=0)
         assert tracker.bs_packs_observed == 2
+
+
+class TestBayesianSurvivalMissing:
+    """Tests for bayesian_survival Signal 2 (missing cards)."""
+
+    def _make_config(self, **kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_missing_high_ata_produces_negative_signal(self):
+        """Card with ATA=10 missing at pick 9: strong negative signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=10.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert score < 0.0
+
+    def test_missing_low_ata_weak_signal(self):
+        """Card with ATA=2 missing at pick 9: weak negative signal."""
+        import math
+        tracker_high = OpennessTracker(self._make_config())
+        high_ata = _make_card("Card", ata=10.0)
+        high_ata["rarity"] = "common"
+        tracker_high.record_missing([high_ata], pick_number=9, pack_number=0)
+
+        tracker_low = OpennessTracker(self._make_config())
+        low_ata = _make_card("Card", ata=2.0)
+        low_ata["rarity"] = "common"
+        tracker_low.record_missing([low_ata], pick_number=9, pack_number=0)
+
+        # Both negative, but high-ATA missing is more negative
+        assert tracker_high.get_scores()["Test"]["score"] < tracker_low.get_scores()["Test"]["score"] < 0.0
+
+    def test_missing_exact_formula(self):
+        """Verify exact formula: ATA=10, pick=9, F=2, card_weight=1.0.
+
+        a=10, F=2, p=9
+        q_open = 1 - 1/20 = 0.95
+        q_closed = 1 - 1/10 = 0.9
+        S_open = 0.95^8 = 0.6634
+        S_closed = 0.9^8 = 0.4305
+        lambda = log((1 - 0.6634)/(1 - 0.4305)) = log(0.3366/0.5695)
+        rarity_weight = 1.0 (common)
+        ramp = 1.0 (pick 9 > ramp 5)
+        """
+        import math
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=10.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+
+        S_open = 0.95 ** 8
+        S_closed = 0.9 ** 8
+        expected = math.log((1 - S_open) / (1 - S_closed))
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(expected, abs=0.001)
+
+    def test_missing_no_gate(self):
+        """Missing cards emit signal even when ATA > pick (they SHOULD still be there)."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=12.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        score = tracker.get_scores()["Test"]["score"]
+        assert score < 0.0  # still produces negative signal
+
+    def test_missing_card_not_in_archetype_ignored(self):
+        """Cards not in any archetype produce no signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Unknown Card", ata=5.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_missing_zero_ata_skipped(self):
+        """Cards with ATA=0 produce no signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=0.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_missing_updates_state_with_decay(self):
+        """Missing signal updates log-odds with decay like wheeling."""
+        import math
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+        card = _make_card("Card", ata=10.0)
+        card["rarity"] = "common"
+
+        # Wheeling at pick 12 first
+        tracker.record_pack([card], pick_number=12, pack_number=0)
+        first = tracker.get_scores()["Test"]["score"]
+
+        # Missing at pick 14 (gap=2 from pick 12)
+        tracker.record_missing([card], pick_number=14, pack_number=0)
+        combined = tracker.get_scores()["Test"]["score"]
+
+        # Combined should be: first * decay^2 + missing_emission
+        decay = (1.0 - 0.15) ** 2
+        S_open = (1 - 1/20) ** 13
+        S_closed = (1 - 1/10) ** 13
+        missing_emission = math.log((1 - S_open) / (1 - S_closed))
+        expected = first * decay + missing_emission
+        assert combined == pytest.approx(expected, abs=0.01)
+
+    def test_missing_only_for_bayesian_survival(self):
+        """record_missing should be a no-op for other scoring methods."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="simple",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        card = _make_card("Card", ata=10.0)
+        card["rarity"] = "common"
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
