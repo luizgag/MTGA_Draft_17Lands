@@ -40,6 +40,10 @@ class ArchetypeConfig(BaseModel):
         "bonus": 0.0001,
     })
     card_weight_threshold: float = 0.4
+    absence_enabled: bool = True
+    slots_per_rarity: Dict[str, int] = Field(default_factory=lambda: {
+        "common": 10, "uncommon": 3, "rare": 1, "mythic": 0,
+    })
     archetypes: List[Archetype] = Field(default_factory=list)
 
 
@@ -167,6 +171,14 @@ class OpennessTracker:
         self.hmm_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
         self.hmm_sum_sq: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        # bayesian_survival state
+        self.bs_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_sum_sq: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
+        self.bs_card_seen: Dict[str, Dict[str, int]] = {arch.name: {} for arch in self.archetypes}
+        self.bs_packs_observed: int = 0
+        self._bs_card_rarity: Dict[str, str] = {}
+        self._bs_card_ata: Dict[str, float] = {}
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -248,6 +260,11 @@ class OpennessTracker:
                     emission = self._hmm_emission(card, pick_number, ata, card_weight, pack_weight)
                     self._hmm_update_state(archetype.name, pick_number, emission)
                     signal = emission
+                elif self.scoring_method == "bayesian_survival":
+                    emission = self._bs_wheeling_emission(card, pick_number, ata, card_weight, pack_weight)
+                    self._bs_update_state(archetype.name, pick_number, emission)
+                    raw_signal = emission
+                    signal = emission
                 else:  # simple
                     raw_signal = (pick_number - ata) / (ata + pick_number)**2 
                     signal = raw_signal * card_weight * pack_weight * 100
@@ -270,6 +287,23 @@ class OpennessTracker:
                     "ata": ata,
                     "signal": signal,
                 })
+
+        if self.scoring_method == "bayesian_survival":
+            self.bs_packs_observed += 1
+            for card in pack_cards:
+                card_name = card.get(DATA_FIELD_NAME, "")
+                # Cache rarity and ATA for absence calculation
+                if card_name not in self._bs_card_rarity:
+                    self._bs_card_rarity[card_name] = (card.get("rarity", "") or "").lower()
+                    deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+                    all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+                    self._bs_card_ata[card_name] = all_decks.get(DATA_FIELD_ATA, 0.0)
+
+                for archetype in self.archetypes:
+                    if card_name in archetype.cards:
+                        seen = self.bs_card_seen.get(archetype.name, {})
+                        seen[card_name] = seen.get(card_name, 0) + 1
+                        self.bs_card_seen[archetype.name] = seen
 
         logger.debug(
             "Openness pick %s.%s complete: %d signals recorded",
@@ -315,6 +349,8 @@ class OpennessTracker:
             return self._scores_bayesian_beta()
         if self.scoring_method == "hmm_hybrid":
             return self._scores_hmm_hybrid()
+        if self.scoring_method == "bayesian_survival":
+            return self._scores_bayesian_survival()
         return self._scores_simple()
 
 
@@ -373,6 +409,184 @@ class OpennessTracker:
         # Track decayed sum of squared emissions for variance estimation
         prev_sum_sq = self.hmm_sum_sq.get(archetype_name, 0.0)
         self.hmm_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
+
+    def _bs_wheeling_emission(self, card: Dict, pick_number: int, ata: float,
+                              card_weight: float, pack_weight: float) -> float:
+        """Signal 1: Log Bayes factor for a card surviving to pick p.
+
+        lambda = (p-1) * log(q_open / q_closed)
+        where q_open = 1 - 1/(a*F), q_closed = 1 - 1/a.
+        """
+        a = max(1.5, ata)
+        F = max(1.0, self.config.hmm_openness_factor)
+        p = pick_number
+
+        q_open = 1.0 - 1.0 / (a * F)
+        q_closed = 1.0 - 1.0 / a
+        log_bf = (p - 1) * math.log(q_open / q_closed)
+
+        common_odds = self.config.rarity_odds.get("common", 0.0899)
+        card_rarity = (card.get("rarity", "") or "").lower()
+        card_odds = self.config.rarity_odds.get(card_rarity, common_odds)
+        rarity_weight = math.sqrt(card_odds / common_odds) if common_odds > 0 else 1.0
+
+        scale = self.config.hmm_emission_scale
+        ramp = self._hmm_pick_ramp_factor(pick_number)
+        return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
+
+    def _bs_update_state(self, archetype_name: str, pick_number: int, emission: float) -> None:
+        """Update bayesian_survival log-odds state with decay."""
+        prev_log_odds = self.bs_log_odds.get(archetype_name, 0.0)
+        last_pick = self.bs_last_pick.get(archetype_name, 1)
+        gap = max(0, pick_number - last_pick)
+
+        decay = max(0.0, 1.0 - self.config.hmm_transition_decay) ** gap
+        self.bs_log_odds[archetype_name] = (prev_log_odds * decay) + emission
+        self.bs_last_pick[archetype_name] = pick_number
+
+        prev_sum_sq = self.bs_sum_sq.get(archetype_name, 0.0)
+        self.bs_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
+
+    def _bs_absence_signal(self, archetype: Archetype) -> float:
+        """Signal 3: Draft-wide absence signal for all cards in an archetype.
+
+        For each card, computes:
+        lambda = k * log(see_open/see_closed) + (N - k) * log((1 - see_open)/(1 - see_closed))
+        where see_H = r * q_H^(p_avg - 1).
+        """
+        if not self.config.absence_enabled or self.bs_packs_observed == 0:
+            return 0.0
+
+        N = self.bs_packs_observed
+        p_avg = 7.5  # approximate midpoint of 1-14
+        F = max(1.0, self.config.hmm_openness_factor)
+        total_signal = 0.0
+
+        for card_name, card_weight in archetype.cards.items():
+            # Use cached rarity/ATA, with defaults for never-seen cards
+            card_rarity = self._bs_card_rarity.get(card_name, "common")
+            card_ata = self._bs_card_ata.get(card_name, 5.0)
+
+            r_odds = self.config.rarity_odds.get(card_rarity, 0.0899)
+            slots = self.config.slots_per_rarity.get(card_rarity, 0)
+            r = r_odds * slots
+
+            if r <= 0 or card_ata == 0.0:
+                continue
+
+            a = max(1.5, card_ata)
+            q_open = 1.0 - 1.0 / (a * F)
+            q_closed = 1.0 - 1.0 / a
+
+            see_open = r * (q_open ** (p_avg - 1))
+            see_closed = r * (q_closed ** (p_avg - 1))
+
+            # Clamp to avoid log(0)
+            see_open = min(max(see_open, 1e-10), 1.0 - 1e-10)
+            see_closed = min(max(see_closed, 1e-10), 1.0 - 1e-10)
+
+            k = self.bs_card_seen.get(archetype.name, {}).get(card_name, 0)
+
+            signal = (k * math.log(see_open / see_closed)
+                      + (N - k) * math.log((1 - see_open) / (1 - see_closed)))
+            total_signal += signal * card_weight
+
+        return total_signal
+
+    def _scores_bayesian_survival(self) -> Dict[str, dict]:
+        """Bayesian survival scoring — log-odds with absence signal and credible interval."""
+        scores = {}
+        for arch in self.archetypes:
+            log_odds = self.bs_log_odds.get(arch.name, 0.0)
+
+            # Add absence signal
+            absence = self._bs_absence_signal(arch)
+            total_log_odds = log_odds + absence
+
+            # Variance estimation
+            sum_sq = self.bs_sum_sq.get(arch.name, 0.0)
+            if sum_sq > 0:
+                sigma = math.sqrt(sum_sq)
+                interval = (total_log_odds - 1.96 * sigma, total_log_odds + 1.96 * sigma)
+            else:
+                interval = None
+
+            scores[arch.name] = {
+                "score": total_log_odds,
+                "confidence": self._confidence_level(arch.name),
+                "interval": interval,
+            }
+        return scores
+
+    def _bs_missing_emission(self, card: Dict, pick_number: int, ata: float,
+                             card_weight: float, pack_weight: float) -> float:
+        """Signal 2: Log Bayes factor for a missing card (taken before pick p).
+
+        lambda = log((1 - S_open) / (1 - S_closed))
+        where S_H = q_H^(p-1). Always <= 0.
+        """
+        a = max(1.5, ata)
+        F = max(1.0, self.config.hmm_openness_factor)
+        p = pick_number
+
+        q_open = 1.0 - 1.0 / (a * F)
+        q_closed = 1.0 - 1.0 / a
+
+        S_open = q_open ** (p - 1)
+        S_closed = q_closed ** (p - 1)
+
+        taken_open = max(1e-10, 1.0 - S_open)
+        taken_closed = max(1e-10, 1.0 - S_closed)
+        log_bf = math.log(taken_open / taken_closed)
+
+        common_odds = self.config.rarity_odds.get("common", 0.0899)
+        card_rarity = (card.get("rarity", "") or "").lower()
+        card_odds = self.config.rarity_odds.get(card_rarity, common_odds)
+        rarity_weight = math.sqrt(card_odds / common_odds) if common_odds > 0 else 1.0
+
+        scale = self.config.hmm_emission_scale
+        ramp = self._hmm_pick_ramp_factor(pick_number)
+        return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
+
+    def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
+        """Record negative signals from missing cards (Signal 2).
+
+        Only active for bayesian_survival scoring method.
+
+        Args:
+            missing_cards: list of card dicts that were in original pack but are now gone
+            pick_number: 1-based pick position within the pack
+            pack_number: 0-indexed pack number
+        """
+        if self.scoring_method != "bayesian_survival":
+            return
+
+        pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
+
+        for card in missing_cards:
+            card_name = card.get(DATA_FIELD_NAME, "")
+            deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+            all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+            ata = all_decks.get(DATA_FIELD_ATA, 0.0)
+
+            if ata == 0.0:
+                continue
+
+            for archetype in self.archetypes:
+                if card_name not in archetype.cards:
+                    continue
+
+                card_weight = archetype.cards[card_name]
+                emission = self._bs_missing_emission(card, pick_number, ata, card_weight, pack_weight)
+                self._bs_update_state(archetype.name, pick_number, emission)
+
+                self.signals.append({
+                    "archetype": archetype.name,
+                    "card_name": card_name,
+                    "pick_number": pick_number,
+                    "ata": ata,
+                    "signal": emission,
+                })
 
     def _scores_hmm_hybrid(self) -> Dict[str, dict]:
         """HMM-inspired hybrid score returned as posterior P(open).
@@ -485,3 +699,10 @@ class OpennessTracker:
         self.hmm_log_odds = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick = {arch.name: 1 for arch in self.archetypes}
         self.hmm_sum_sq = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_log_odds = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_sum_sq = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_last_pick = {arch.name: 1 for arch in self.archetypes}
+        self.bs_card_seen = {arch.name: {} for arch in self.archetypes}
+        self.bs_packs_observed = 0
+        self._bs_card_rarity = {}
+        self._bs_card_ata = {}

@@ -165,6 +165,7 @@ class ArchetypeEditor:
             "Weighted": "normalized",
             "Bayesian (%)": "bayesian_beta",
             "HMM Hybrid (%)": "hmm_hybrid",
+            "Bayesian Survival": "bayesian_survival",
         }
         self._scoring_internal_map = {v: k for k, v in self._scoring_display_map.items()}
 
@@ -406,7 +407,7 @@ class ArchetypeEditor:
             self.prior_frame.pack(side=tkinter.LEFT)
         elif internal == "normalized":
             self.curve_frame.pack(side=tkinter.LEFT)
-        elif internal == "hmm_hybrid":
+        elif internal in ("hmm_hybrid", "bayesian_survival"):
             self.hmm_frame.pack(side=tkinter.LEFT)
 
     def _save(self):
