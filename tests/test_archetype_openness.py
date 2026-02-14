@@ -1809,3 +1809,92 @@ class TestBayesianSurvivalIntegration:
         tracker.record_pack(pack_cards, pick_number=7, pack_number=0)
         scores = tracker.get_scores()
         assert len(scores) == len(archetypes)
+
+
+class TestBayesianSurvivalEdgeCases:
+    """Edge case tests for the bayesian_survival method."""
+
+    def _make_config(self, **kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+            absence_enabled=False,
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_empty_missing_cards(self):
+        """record_missing with empty list is a no-op."""
+        tracker = OpennessTracker(self._make_config())
+        tracker.record_missing([], pick_number=9, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_empty_pack_cards(self):
+        """record_pack with empty list is a no-op (pick 1 early return)."""
+        tracker = OpennessTracker(self._make_config())
+        tracker.record_pack([], pick_number=1, pack_number=0)
+        assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
+
+    def test_pack_number_out_of_range(self):
+        """pack_number beyond pack_weights uses default 1.0."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=7, pack_number=5)
+        assert tracker.get_scores()["Test"]["score"] > 0.0
+
+    def test_no_archetypes_empty_scores(self):
+        """Config with no archetypes returns empty scores."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[],
+        )
+        tracker = OpennessTracker(config)
+        assert tracker.get_scores() == {}
+
+    def test_multiple_cards_in_one_pack(self):
+        """Multiple archetype cards in same pack all contribute."""
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[Archetype(name="Test", cards={"A": 1.0, "B": 1.0})],
+            absence_enabled=False,
+        )
+        tracker_single = OpennessTracker(config)
+        card_a = _make_card("A", ata=3.0)
+        card_a["rarity"] = "common"
+        tracker_single.record_pack([card_a], pick_number=7, pack_number=0)
+        score_single = tracker_single.get_scores()["Test"]["score"]
+
+        tracker_both = OpennessTracker(config)
+        card_b = _make_card("B", ata=3.0)
+        card_b["rarity"] = "common"
+        tracker_both.record_pack([card_a, card_b], pick_number=7, pack_number=0)
+        score_both = tracker_both.get_scores()["Test"]["score"]
+
+        assert score_both > score_single
+
+    def test_top_contributors_works(self):
+        """get_top_contributors returns correct data for bayesian_survival."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=7, pack_number=0)
+        top = tracker.get_top_contributors("Test", count=3)
+        assert len(top) == 1
+        assert top[0]["card_name"] == "Card"
+
+    def test_scoring_method_routing(self):
+        """Verify get_scores routes to correct method."""
+        for method in ["simple", "normalized", "bayesian_beta", "hmm_hybrid", "bayesian_survival"]:
+            config = ArchetypeConfig(
+                set_code="TST",
+                scoring_method=method,
+                archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+            )
+            tracker = OpennessTracker(config)
+            scores = tracker.get_scores()
+            assert "Test" in scores
+            assert "score" in scores["Test"]
