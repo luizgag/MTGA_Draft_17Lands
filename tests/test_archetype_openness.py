@@ -1264,3 +1264,43 @@ class TestBayesianSurvivalConfig:
         loaded = load_archetype_config(file_path)
         assert loaded.absence_enabled is False
         assert loaded.slots_per_rarity["common"] == 11
+
+
+class TestBayesianSurvivalState:
+    """Tests for bayesian_survival state initialization and reset."""
+
+    def _make_config(self):
+        return ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[
+                Archetype(name="BG Elves", cards={"Elf Lord": 0.9}),
+                Archetype(name="UB Control", cards={"Counterspell": 0.8}),
+            ],
+        )
+
+    def test_initial_state(self):
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+        assert tracker.bs_log_odds == {"BG Elves": 0.0, "UB Control": 0.0}
+        assert tracker.bs_sum_sq == {"BG Elves": 0.0, "UB Control": 0.0}
+        assert tracker.bs_last_pick == {"BG Elves": 1, "UB Control": 1}
+        assert tracker.bs_card_seen == {"BG Elves": {}, "UB Control": {}}
+        assert tracker.bs_packs_observed == 0
+
+    def test_reset_clears_state(self):
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+        # Mutate state
+        tracker.bs_log_odds["BG Elves"] = 1.5
+        tracker.bs_sum_sq["BG Elves"] = 0.5
+        tracker.bs_last_pick["BG Elves"] = 7
+        tracker.bs_card_seen["BG Elves"]["Elf Lord"] = 3
+        tracker.bs_packs_observed = 5
+        # Reset
+        tracker.reset()
+        assert tracker.bs_log_odds == {"BG Elves": 0.0, "UB Control": 0.0}
+        assert tracker.bs_sum_sq == {"BG Elves": 0.0, "UB Control": 0.0}
+        assert tracker.bs_last_pick == {"BG Elves": 1, "UB Control": 1}
+        assert tracker.bs_card_seen == {"BG Elves": {}, "UB Control": {}}
+        assert tracker.bs_packs_observed == 0

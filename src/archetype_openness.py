@@ -171,6 +171,12 @@ class OpennessTracker:
         self.hmm_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
         self.hmm_sum_sq: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        # bayesian_survival state
+        self.bs_log_odds: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_sum_sq: Dict[str, float] = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_last_pick: Dict[str, int] = {arch.name: 1 for arch in self.archetypes}
+        self.bs_card_seen: Dict[str, Dict[str, int]] = {arch.name: {} for arch in self.archetypes}
+        self.bs_packs_observed: int = 0
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -489,3 +495,8 @@ class OpennessTracker:
         self.hmm_log_odds = {arch.name: 0.0 for arch in self.archetypes}
         self.hmm_last_pick = {arch.name: 1 for arch in self.archetypes}
         self.hmm_sum_sq = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_log_odds = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_sum_sq = {arch.name: 0.0 for arch in self.archetypes}
+        self.bs_last_pick = {arch.name: 1 for arch in self.archetypes}
+        self.bs_card_seen = {arch.name: {} for arch in self.archetypes}
+        self.bs_packs_observed = 0
