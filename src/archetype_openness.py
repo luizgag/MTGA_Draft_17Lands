@@ -258,6 +258,11 @@ class OpennessTracker:
                     emission = self._hmm_emission(card, pick_number, ata, card_weight, pack_weight)
                     self._hmm_update_state(archetype.name, pick_number, emission)
                     signal = emission
+                elif self.scoring_method == "bayesian_survival":
+                    emission = self._bs_wheeling_emission(card, pick_number, ata, card_weight, pack_weight)
+                    self._bs_update_state(archetype.name, pick_number, emission)
+                    raw_signal = emission
+                    signal = emission
                 else:  # simple
                     raw_signal = (pick_number - ata) / (ata + pick_number)**2 
                     signal = raw_signal * card_weight * pack_weight * 100
@@ -280,6 +285,16 @@ class OpennessTracker:
                     "ata": ata,
                     "signal": signal,
                 })
+
+        if self.scoring_method == "bayesian_survival":
+            self.bs_packs_observed += 1
+            for card in pack_cards:
+                card_name = card.get(DATA_FIELD_NAME, "")
+                for archetype in self.archetypes:
+                    if card_name in archetype.cards:
+                        seen = self.bs_card_seen.get(archetype.name, {})
+                        seen[card_name] = seen.get(card_name, 0) + 1
+                        self.bs_card_seen[archetype.name] = seen
 
         logger.debug(
             "Openness pick %s.%s complete: %d signals recorded",
@@ -325,6 +340,8 @@ class OpennessTracker:
             return self._scores_bayesian_beta()
         if self.scoring_method == "hmm_hybrid":
             return self._scores_hmm_hybrid()
+        if self.scoring_method == "bayesian_survival":
+            return self._scores_bayesian_survival()
         return self._scores_simple()
 
 
@@ -383,6 +400,55 @@ class OpennessTracker:
         # Track decayed sum of squared emissions for variance estimation
         prev_sum_sq = self.hmm_sum_sq.get(archetype_name, 0.0)
         self.hmm_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
+
+    def _bs_wheeling_emission(self, card: Dict, pick_number: int, ata: float,
+                              card_weight: float, pack_weight: float) -> float:
+        """Signal 1: Log Bayes factor for a card surviving to pick p.
+
+        lambda = (p-1) * log(q_open / q_closed)
+        where q_open = 1 - 1/(a*F), q_closed = 1 - 1/a.
+        """
+        a = max(1.5, ata)
+        F = max(1.0, self.config.hmm_openness_factor)
+        p = pick_number
+
+        q_open = 1.0 - 1.0 / (a * F)
+        q_closed = 1.0 - 1.0 / a
+        log_bf = (p - 1) * math.log(q_open / q_closed)
+
+        common_odds = self.config.rarity_odds.get("common", 0.0899)
+        card_rarity = (card.get("rarity", "") or "").lower()
+        card_odds = self.config.rarity_odds.get(card_rarity, common_odds)
+        rarity_weight = math.sqrt(card_odds / common_odds) if common_odds > 0 else 1.0
+
+        scale = self.config.hmm_emission_scale
+        ramp = self._hmm_pick_ramp_factor(pick_number)
+        return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
+
+    def _bs_update_state(self, archetype_name: str, pick_number: int, emission: float) -> None:
+        """Update bayesian_survival log-odds state with decay."""
+        prev_log_odds = self.bs_log_odds.get(archetype_name, 0.0)
+        last_pick = self.bs_last_pick.get(archetype_name, 1)
+        gap = max(0, pick_number - last_pick)
+
+        decay = max(0.0, 1.0 - self.config.hmm_transition_decay) ** gap
+        self.bs_log_odds[archetype_name] = (prev_log_odds * decay) + emission
+        self.bs_last_pick[archetype_name] = pick_number
+
+        prev_sum_sq = self.bs_sum_sq.get(archetype_name, 0.0)
+        self.bs_sum_sq[archetype_name] = (prev_sum_sq * (decay ** 2)) + (emission ** 2)
+
+    def _scores_bayesian_survival(self) -> Dict[str, dict]:
+        """Bayesian survival scoring — returns log-odds with credible interval."""
+        scores = {}
+        for arch in self.archetypes:
+            log_odds = self.bs_log_odds.get(arch.name, 0.0)
+            scores[arch.name] = {
+                "score": log_odds,
+                "confidence": self._confidence_level(arch.name),
+                "interval": None,
+            }
+        return scores
 
     def _scores_hmm_hybrid(self) -> Dict[str, dict]:
         """HMM-inspired hybrid score returned as posterior P(open).
