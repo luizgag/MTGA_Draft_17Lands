@@ -1701,3 +1701,111 @@ class TestBayesianSurvivalAbsence:
         # and absence signal (card seen 2 times, expected ~1.5 -> slightly positive)
         # We can't easily assert the exact value, but the score should exist
         assert isinstance(scores["Test"]["score"], float)
+
+
+class TestBayesianSurvivalIntegration:
+    """Integration tests combining wheeling + missing + absence."""
+
+    def _make_config(self, **kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            archetypes=[
+                Archetype(name="BG Elves", cards={"Elf Lord": 0.9, "Murder": 0.2}),
+                Archetype(name="UB Control", cards={"Murder": 0.7, "Counterspell": 0.8}),
+            ],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_wheeling_and_missing_combine(self):
+        """Wheeling (positive) + missing (negative) should partially cancel."""
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+
+        # Wheeling: Elf Lord at pick 8 (ATA 3) -> positive for BG Elves
+        card = _make_card("Elf Lord", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=8, pack_number=0)
+        score_after_wheeling = tracker.get_scores()["BG Elves"]["score"]
+        assert score_after_wheeling > 0.0
+
+        # Missing: Elf Lord gone at pick 10 (from next pack) -> negative
+        tracker.record_missing([card], pick_number=10, pack_number=1)
+        score_after_missing = tracker.get_scores()["BG Elves"]["score"]
+        # The missing signal is negative, so total should be less than wheeling alone
+        assert score_after_missing < score_after_wheeling
+
+    def test_open_archetype_positive_score(self):
+        """Archetype with many cards wheeling past ATA should have positive score."""
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+
+        # Multiple BG cards wheeling strongly
+        for pick in [7, 8, 9, 10, 11]:
+            card = _make_card("Elf Lord", ata=3.0)
+            card["rarity"] = "common"
+            tracker.record_pack([card], pick_number=pick, pack_number=0)
+
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] > 0.0
+        assert scores["BG Elves"]["confidence"] in ("medium", "high")
+
+    def test_closed_archetype_negative_score(self):
+        """Archetype with only missing cards should have negative score."""
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+
+        # Multiple BG cards missing
+        for pick in [9, 10, 11, 12]:
+            card = _make_card("Elf Lord", ata=10.0)
+            card["rarity"] = "common"
+            tracker.record_missing([card], pick_number=pick, pack_number=0)
+
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] < 0.0
+
+    def test_reset_clears_everything(self):
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+        card = _make_card("Elf Lord", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=7, pack_number=0)
+        tracker.record_missing([card], pick_number=9, pack_number=0)
+
+        tracker.reset()
+        scores = tracker.get_scores()
+        assert scores["BG Elves"]["score"] == pytest.approx(0.0)
+        assert scores["BG Elves"]["confidence"] == "none"
+
+    def test_interval_returned(self):
+        """After signals, interval should be a 2-tuple."""
+        config = self._make_config()
+        tracker = OpennessTracker(config)
+        card = _make_card("Elf Lord", ata=3.0)
+        card["rarity"] = "common"
+        tracker.record_pack([card], pick_number=8, pack_number=0)
+
+        data = tracker.get_scores()["BG Elves"]
+        assert data["interval"] is not None
+        assert len(data["interval"]) == 2
+        # For log-odds output, interval is (lo, hi) around score
+        assert data["interval"][0] < data["score"]
+        assert data["interval"][1] > data["score"]
+
+    def test_real_data_integration(self, otj_dataset):
+        """Full flow with real OTJ dataset."""
+        archetypes = auto_detect_archetypes(otj_dataset, threshold_percent=5.0)
+        config = ArchetypeConfig(
+            set_code="OTJ",
+            scoring_method="bayesian_survival",
+            archetypes=archetypes,
+        )
+        tracker = OpennessTracker(config)
+
+        card_ids = list(otj_dataset._dataset["card_ratings"].keys())[:8]
+        pack_cards = otj_dataset.get_data_by_id(card_ids)
+
+        tracker.record_pack(pack_cards, pick_number=7, pack_number=0)
+        scores = tracker.get_scores()
+        assert len(scores) == len(archetypes)
