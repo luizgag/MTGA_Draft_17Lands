@@ -1763,6 +1763,13 @@ class Overlay(ScaledWindow):
                     score_text = f"{score * 100:.0f}% \u00b1{half_width:.0f}%"
                 else:
                     score_text = f"{score * 100:.0f}%"
+            elif scoring_method == "bayesian_survival":
+                interval = data.get("interval")
+                if interval is not None:
+                    half_width = (interval[1] - interval[0]) / 2
+                    score_text = f"{score:+.2f} \u00b1{half_width:.2f}"
+                else:
+                    score_text = f"{score:+.2f}"
             else:
                 score_text = f"{score:+.1f}"
 
@@ -1779,6 +1786,14 @@ class Overlay(ScaledWindow):
             if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
                 bar_width = int(score * 80)
                 bar_color = self._openness_bayesian_bar_color(score)
+            elif scoring_method == "bayesian_survival":
+                bar_width = int(abs(score) / max_score * 80) if max_score else 0
+                if score > 0.5:
+                    bar_color = "#4CAF50"
+                elif score < -0.5:
+                    bar_color = "#F44336"
+                else:
+                    bar_color = "#888888"
             else:
                 bar_width = int(abs(score) / max_score * 80) if max_score else 0
                 bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
