@@ -40,6 +40,10 @@ class ArchetypeConfig(BaseModel):
         "bonus": 0.0001,
     })
     card_weight_threshold: float = 0.4
+    absence_enabled: bool = True
+    slots_per_rarity: Dict[str, int] = Field(default_factory=lambda: {
+        "common": 10, "uncommon": 3, "rare": 1, "mythic": 0,
+    })
     archetypes: List[Archetype] = Field(default_factory=list)
 
 

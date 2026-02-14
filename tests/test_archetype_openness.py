@@ -1231,3 +1231,36 @@ class TestMtgoPickConversion:
         scanner.current_pick_in_pack = 1
         assert scanner.retrieve_current_pick_in_pack() == 1
         # The openness tracker should use 1, not 16
+
+
+class TestBayesianSurvivalConfig:
+    """Tests for bayesian_survival config fields."""
+
+    def test_default_absence_enabled(self):
+        config = ArchetypeConfig(set_code="TST")
+        assert config.absence_enabled is True
+
+    def test_default_slots_per_rarity(self):
+        config = ArchetypeConfig(set_code="TST")
+        assert config.slots_per_rarity == {
+            "common": 10, "uncommon": 3, "rare": 1, "mythic": 0
+        }
+
+    def test_old_config_gets_defaults(self):
+        data = {"set_code": "TST", "scoring_method": "bayesian_survival"}
+        config = ArchetypeConfig.model_validate(data)
+        assert config.absence_enabled is True
+        assert config.slots_per_rarity["common"] == 10
+
+    def test_config_round_trip(self, tmp_path):
+        config = ArchetypeConfig(
+            set_code="TST",
+            scoring_method="bayesian_survival",
+            absence_enabled=False,
+            slots_per_rarity={"common": 11, "uncommon": 3, "rare": 1, "mythic": 0},
+        )
+        file_path = str(tmp_path / "test_config.json")
+        save_archetype_config(config, file_path)
+        loaded = load_archetype_config(file_path)
+        assert loaded.absence_enabled is False
+        assert loaded.slots_per_rarity["common"] == 11
