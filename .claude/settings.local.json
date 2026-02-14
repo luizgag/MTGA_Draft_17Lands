@@ -58,7 +58,8 @@
       "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalIntegration -v)",
       "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/ -v)",
       "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/test_archetype_openness.py::TestBayesianSurvivalEdgeCases -v)",
-      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/)"
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest /mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.worktrees/bayesian-survival/tests/)",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/.venv/bin/pytest tests/)"
     ]
   }
 }
