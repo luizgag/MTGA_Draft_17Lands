@@ -1432,6 +1432,16 @@ class Overlay(ScaledWindow):
                     if missing_data:
                         self.openness_tracker.record_missing(missing_data, pick_in_pack, pack_number)
 
+            # Replay passed card signals
+            picked_card = entry.get("picked_card", "")
+            if picked_card and all_names:
+                passed_names = [n for n in all_names if n != picked_card]
+                if passed_names:
+                    passed_data = self.draft.set_data.get_data_by_name(passed_names)
+                    if passed_data:
+                        self.openness_tracker.record_passed(
+                            passed_data, pick_in_pack, pack_number)
+
         self.__update_openness_panel()
 
     def __update_settings_storage(self):
