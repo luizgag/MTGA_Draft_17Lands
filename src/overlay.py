@@ -422,6 +422,7 @@ class Overlay(ScaledWindow):
         self._prev_pick_for_passed = 0
         self._prev_pack_number_for_passed = 0
         self._prev_taken_count = 0
+        self._last_openness_key = (None, None)
 
         self.missing_frame = tkinter.Frame(self.root)
         self.missing_cards_label = Label(
@@ -1400,6 +1401,7 @@ class Overlay(ScaledWindow):
         self._prev_pick_for_passed = 0
         self._prev_pack_number_for_passed = 0
         self._prev_taken_count = 0
+        self._last_openness_key = (None, None)
 
     def __replay_hindsight_openness(self):
         """Reset and replay openness signals from beginning through current hindsight position."""
@@ -1432,10 +1434,16 @@ class Overlay(ScaledWindow):
                     if missing_data:
                         self.openness_tracker.record_missing(missing_data, pick_in_pack, pack_number)
 
+            # Revert passed signals for cards that wheeled back
+            pack_card_names = [c.get(constants.DATA_FIELD_NAME, "") for c in pack_cards_data]
+            self.openness_tracker.revert_returned(pack_card_names, pack_number)
+
             # Replay passed card signals
             picked_card = entry.get("picked_card", "")
             if picked_card and all_names:
-                passed_names = [n for n in all_names if n != picked_card]
+                passed_names = list(all_names)
+                if picked_card in passed_names:
+                    passed_names.remove(picked_card)
                 if passed_names:
                     passed_data = self.draft.set_data.get_data_by_name(passed_names)
                     if passed_data:
@@ -1715,22 +1723,33 @@ class Overlay(ScaledWindow):
                 if (current_taken_count > self._prev_taken_count
                         and self._prev_pack_for_passed):
                     new_picks = taken_cards[self._prev_taken_count:]
-                    picked_names = {c.get(constants.DATA_FIELD_NAME, "") for c in new_picks}
-                    passed = [c for c in self._prev_pack_for_passed
-                              if c.get(constants.DATA_FIELD_NAME, "") not in picked_names]
+                    picked_names = [c.get(constants.DATA_FIELD_NAME, "") for c in new_picks]
+                    passed = list(self._prev_pack_for_passed)
+                    for name in picked_names:
+                        for j, c in enumerate(passed):
+                            if c.get(constants.DATA_FIELD_NAME, "") == name:
+                                passed.pop(j)
+                                break
                     if passed:
                         self.openness_tracker.record_passed(
                             passed, self._prev_pick_for_passed,
                             self._prev_pack_number_for_passed)
+
+                # Revert passed signals for cards that wheeled back
+                pack_card_names = [c.get(constants.DATA_FIELD_NAME, "") for c in pack_cards]
+                self.openness_tracker.revert_returned(pack_card_names, current_pack - 1)
 
                 self._prev_pack_for_passed = pack_cards
                 self._prev_pick_for_passed = pick_in_pack
                 self._prev_pack_number_for_passed = current_pack - 1
                 self._prev_taken_count = current_taken_count
 
-                self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
-                if missing_cards and pick_in_pack >= 9:
-                    self.openness_tracker.record_missing(missing_cards, pick_in_pack, current_pack - 1)
+                current_openness_key = (current_pack - 1, pick_in_pack)
+                if current_openness_key != self._last_openness_key:
+                    self._last_openness_key = current_openness_key
+                    self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
+                    if missing_cards and pick_in_pack >= 9:
+                        self.openness_tracker.record_missing(missing_cards, pick_in_pack, current_pack - 1)
                 self.__update_openness_panel()
 
         self.__update_missing_table(missing_cards,

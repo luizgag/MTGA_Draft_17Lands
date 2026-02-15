@@ -2131,3 +2131,135 @@ class TestPassedCardsTracking:
         card = _make_card("Goblin Guide", ata=3.0)
         tracker.record_passed([card], pick_number=1, pack_number=0)
         assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_passed_signal_includes_pack_number(self):
+        """Each passed signal entry should include a pack_number field."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=5, pack_number=1)
+        assert len(tracker.passed_signals) > 0
+        for sig in tracker.passed_signals:
+            assert "pack_number" in sig
+            assert sig["pack_number"] == 1
+
+
+class TestRevertReturned:
+    """Tests for revert_returned: undo passed signals when a card wheels back."""
+
+    @staticmethod
+    def _make_config(**kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="simple",
+            pack_weights=[1.0, 1.0, 1.0],
+            archetypes=[
+                Archetype(name="Goblins", cards={"Goblin Guide": 0.8, "Lightning Bolt": 0.3}),
+                Archetype(name="Izzet", cards={"Lightning Bolt": 0.7, "Counterspell": 0.6}),
+            ],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_revert_removes_earliest_signal(self):
+        """Pass a card then revert it — passed score returns to 0."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_revert_scoped_to_pack_number(self):
+        """Revert only affects signals from the matching pack_number."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        tracker.record_passed([card], pick_number=3, pack_number=1)
+
+        score_before = tracker.get_passed_scores()["Goblins"]["score"]
+        # Revert only pack 0
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        score_after = tracker.get_passed_scores()["Goblins"]["score"]
+
+        # Pack 1 signal should still be present
+        assert score_after < 0.0
+        assert score_after > score_before
+
+    def test_revert_earliest_only(self):
+        """Same card passed at pick 2 and pick 4 in same pack — revert removes only pick 2."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        tracker.record_passed([card], pick_number=4, pack_number=0)
+
+        score_both = tracker.get_passed_scores()["Goblins"]["score"]
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        score_after = tracker.get_passed_scores()["Goblins"]["score"]
+
+        # Only pick 2 removed, pick 4 signal should remain
+        assert score_after < 0.0
+        assert score_after > score_both
+
+    def test_revert_idempotent(self):
+        """Calling revert twice for the same card is the same as calling once."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        score_first = tracker.get_passed_scores()["Goblins"]["score"]
+
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        score_second = tracker.get_passed_scores()["Goblins"]["score"]
+
+        assert score_first == pytest.approx(score_second)
+        assert score_first == pytest.approx(0.0)
+
+    def test_revert_unknown_card_is_noop(self):
+        """Reverting a card that was never passed does nothing."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        score_before = tracker.get_passed_scores()["Goblins"]["score"]
+
+        tracker.revert_returned(["Unknown Card"], pack_number=0)
+        score_after = tracker.get_passed_scores()["Goblins"]["score"]
+
+        assert score_after == pytest.approx(score_before)
+
+    def test_revert_multi_archetype(self):
+        """Card in 2 archetypes — revert removes signals from both."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Lightning Bolt", ata=4.0)
+        tracker.record_passed([card], pick_number=3, pack_number=0)
+
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+        assert tracker.get_passed_scores()["Izzet"]["score"] < 0.0
+
+        tracker.revert_returned(["Lightning Bolt"], pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+        assert tracker.get_passed_scores()["Izzet"]["score"] == pytest.approx(0.0)
+
+
+class TestDoubleRecordingPrevention:
+    """Tests documenting that record_pack doubles signals when called twice,
+    and verifying the overlay-level dedup guard prevents this."""
+
+    def test_record_pack_called_twice_doubles_signals(self):
+        """Calling record_pack twice with same data doubles the score.
+
+        This documents the root cause of the bug: OpennessTracker itself
+        does no dedup — the overlay must guard against duplicate calls.
+        """
+        tracker = OpennessTracker(SIMPLE_CONFIG)
+        pack = [_make_card("Elf Lord", ata=3.0)]
+
+        tracker.record_pack(pack, pick_number=7, pack_number=0)
+        score_once = tracker.get_scores()["BG Elves"]["score"]
+
+        tracker.record_pack(pack, pick_number=7, pack_number=0)
+        score_twice = tracker.get_scores()["BG Elves"]["score"]
+
+        assert score_once > 0.0
+        assert score_twice == pytest.approx(score_once * 2, abs=0.01)

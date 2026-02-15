@@ -631,8 +631,6 @@ class OpennessTracker:
             pick_number: 1-based pick position within the pack
             pack_number: 0-indexed pack number
         """
-        if pick_number <= 1:
-            return
 
         pack_weight = self.passed_pack_weights[pack_number] if pack_number < len(self.passed_pack_weights) else 1.0
 
@@ -657,9 +655,37 @@ class OpennessTracker:
                     "archetype": archetype.name,
                     "card_name": card_name,
                     "pick_number": pick_number,
+                    "pack_number": pack_number,
                     "ata": ata,
                     "signal": signal,
                 })
+
+    def revert_returned(self, returned_card_names: List[str], pack_number: int) -> None:
+        """Remove passed signals for cards that wheeled back (returned in a later pack).
+
+        For each returned card name, finds signals matching card_name + pack_number,
+        then removes all entries with the earliest pick_number among those matches.
+        This handles multi-archetype cards (same card_name + pack_number + pick_number
+        across different archetypes).
+
+        Idempotent: calling twice for the same card has no additional effect.
+
+        Args:
+            returned_card_names: list of card names that appeared again in a pack
+            pack_number: the pack_number whose passed signals should be checked
+        """
+        for name in returned_card_names:
+            matches = [s for s in self.passed_signals
+                       if s["card_name"] == name and s["pack_number"] == pack_number]
+            if not matches:
+                continue
+            earliest_pick = min(s["pick_number"] for s in matches)
+            self.passed_signals = [
+                s for s in self.passed_signals
+                if not (s["card_name"] == name
+                        and s["pack_number"] == pack_number
+                        and s["pick_number"] == earliest_pick)
+            ]
 
     def get_passed_scores(self) -> Dict[str, dict]:
         """Get aggregated passed-cards scores for all archetypes.
