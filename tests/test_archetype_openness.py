@@ -2124,3 +2124,10 @@ class TestPassedCardsTracking:
         assert tracker.get_scores()["Goblins"]["score"] == pytest.approx(0.0)
         # Passed score should be negative
         assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+
+    def test_pick_1_produces_no_signal(self):
+        """Pick 1 is a fresh pack — no one passed those cards."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=1, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)

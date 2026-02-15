@@ -631,6 +631,9 @@ class OpennessTracker:
             pick_number: 1-based pick position within the pack
             pack_number: 0-indexed pack number
         """
+        if pick_number <= 1:
+            return
+
         pack_weight = self.passed_pack_weights[pack_number] if pack_number < len(self.passed_pack_weights) else 1.0
 
         for card in passed_cards:
