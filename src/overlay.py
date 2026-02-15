@@ -418,6 +418,10 @@ class Overlay(ScaledWindow):
         self.openness_tracker = None
         self.openness_frame = tkinter.LabelFrame(self.root, text="Archetype Openness")
         self._openness_tooltip = None
+        self._prev_pack_for_passed = []
+        self._prev_pick_for_passed = 0
+        self._prev_pack_number_for_passed = 0
+        self._prev_taken_count = 0
 
         self.missing_frame = tkinter.Frame(self.root)
         self.missing_cards_label = Label(
@@ -1392,6 +1396,10 @@ class Overlay(ScaledWindow):
         else:
             self.openness_tracker = None
             self.openness_frame.grid_remove()
+        self._prev_pack_for_passed = []
+        self._prev_pick_for_passed = 0
+        self._prev_pack_number_for_passed = 0
+        self._prev_taken_count = 0
 
     def __replay_hindsight_openness(self):
         """Reset and replay openness signals from beginning through current hindsight position."""
@@ -1691,6 +1699,25 @@ class Overlay(ScaledWindow):
                 self.__replay_hindsight_openness()
             else:
                 pick_in_pack = self.draft.retrieve_current_pick_in_pack()
+
+                # Detect passed cards: when taken_cards grows, a pick was made
+                current_taken_count = len(taken_cards)
+                if (current_taken_count > self._prev_taken_count
+                        and self._prev_pack_for_passed):
+                    new_picks = taken_cards[self._prev_taken_count:]
+                    picked_names = {c.get(constants.DATA_FIELD_NAME, "") for c in new_picks}
+                    passed = [c for c in self._prev_pack_for_passed
+                              if c.get(constants.DATA_FIELD_NAME, "") not in picked_names]
+                    if passed:
+                        self.openness_tracker.record_passed(
+                            passed, self._prev_pick_for_passed,
+                            self._prev_pack_number_for_passed)
+
+                self._prev_pack_for_passed = pack_cards
+                self._prev_pick_for_passed = pick_in_pack
+                self._prev_pack_number_for_passed = current_pack - 1
+                self._prev_taken_count = current_taken_count
+
                 self.openness_tracker.record_pack(pack_cards, pick_in_pack, current_pack - 1)
                 if missing_cards and pick_in_pack >= 9:
                     self.openness_tracker.record_missing(missing_cards, pick_in_pack, current_pack - 1)
