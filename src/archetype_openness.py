@@ -560,14 +560,14 @@ class OpennessTracker:
         return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
 
     def _simple_alsa_missing_emission(self, ata: float, card_weight: float,
-                                      pack_weight: float) -> float:
+                                      pack_weight: float, pick_number: int) -> float:
         """Negative signal for a missing card in simple_alsa scoring.
 
         Cards taken by others indicate archetype competition.
         Lower ATA (stronger cards) produce stronger negative signals
         because early picks represent bigger archetype commitment.
         """
-        raw_signal = -(1.0 / ata)
+        raw_signal = -(1.0 / ata + pick_number)
         return raw_signal * card_weight * pack_weight * 100
 
     def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
@@ -601,7 +601,7 @@ class OpennessTracker:
                 card_weight = archetype.cards[card_name]
 
                 if self.scoring_method == "simple_alsa":
-                    emission = self._simple_alsa_missing_emission(ata, card_weight, pack_weight)
+                    emission = self._simple_alsa_missing_emission(ata, card_weight, pack_weight, pick_number)
                 else:
                     emission = self._bs_missing_emission(card, pick_number, ata, card_weight, pack_weight)
                     self._bs_update_state(archetype.name, pick_number, emission)
