@@ -180,6 +180,13 @@ class OpennessTracker:
         self.bs_packs_observed: int = 0
         self._bs_card_rarity: Dict[str, str] = {}
         self._bs_card_ata: Dict[str, float] = {}
+        # Passed cards tracking state
+        self.passed_signals: List[Dict] = []
+        # Invert pack weights: swap P1 and P2 weights
+        if len(self.pack_weights) >= 2:
+            self.passed_pack_weights = [self.pack_weights[1], self.pack_weights[0]] + list(self.pack_weights[2:])
+        else:
+            self.passed_pack_weights = list(self.pack_weights)
 
     def record_pack(self, pack_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record positive signals from a pack of cards.
@@ -567,7 +574,7 @@ class OpennessTracker:
         Lower ATA (stronger cards) produce stronger negative signals
         because early picks represent bigger archetype commitment.
         """
-        raw_signal = -(1.0 / ata + pick_number)
+        raw_signal = -(1.0 / (ata + pick_number))
         return raw_signal * card_weight * pack_weight * 100
 
     def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
@@ -613,6 +620,69 @@ class OpennessTracker:
                     "ata": ata,
                     "signal": emission,
                 })
+
+    def record_passed(self, passed_cards: List[Dict], pick_number: int, pack_number: int) -> None:
+        """Record signals from cards the user passed (didn't pick).
+
+        Uses formula: -(1/(ata + pick_number)) * card_weight * passed_pack_weight * 100
+
+        Args:
+            passed_cards: list of card dicts the user chose not to pick
+            pick_number: 1-based pick position within the pack
+            pack_number: 0-indexed pack number
+        """
+        pack_weight = self.passed_pack_weights[pack_number] if pack_number < len(self.passed_pack_weights) else 1.0
+
+        for card in passed_cards:
+            card_name = card.get(DATA_FIELD_NAME, "")
+            deck_colors = card.get(DATA_FIELD_DECK_COLORS, {})
+            all_decks = deck_colors.get(FILTER_OPTION_ALL_DECKS, {})
+            ata = all_decks.get(DATA_FIELD_ATA, 0.0)
+
+            if ata == 0.0:
+                continue
+
+            for archetype in self.archetypes:
+                if card_name not in archetype.cards:
+                    continue
+
+                card_weight = archetype.cards[card_name]
+                raw_signal = -(1.0 / (ata + pick_number))
+                signal = raw_signal * card_weight * pack_weight * 100
+
+                self.passed_signals.append({
+                    "archetype": archetype.name,
+                    "card_name": card_name,
+                    "pick_number": pick_number,
+                    "ata": ata,
+                    "signal": signal,
+                })
+
+    def get_passed_scores(self) -> Dict[str, dict]:
+        """Get aggregated passed-cards scores for all archetypes.
+
+        Returns dict of {archetype_name: {"score": float}}.
+        Always negative (passing cards is always a cost).
+        """
+        scores = {}
+        for arch in self.archetypes:
+            total = sum(s["signal"] for s in self.passed_signals if s["archetype"] == arch.name)
+            scores[arch.name] = {"score": total}
+        return scores
+
+    def get_top_passed(self, archetype_name: str, count: int = 3) -> List[Dict]:
+        """Get top N passed cards by absolute signal for an archetype."""
+        arch_signals = [s for s in self.passed_signals if s["archetype"] == archetype_name]
+        arch_signals.sort(key=lambda s: abs(s["signal"]), reverse=True)
+        return [
+            {
+                "card_name": s["card_name"],
+                "pick_number": s["pick_number"],
+                "ata": s["ata"],
+                "signal": s["signal"],
+            }
+            for s in arch_signals[:count]
+        ]
 
     def _scores_hmm_hybrid(self) -> Dict[str, dict]:
         """HMM-inspired hybrid score returned as posterior P(open).
@@ -732,3 +802,4 @@ class OpennessTracker:
         self.bs_packs_observed = 0
         self._bs_card_rarity = {}
         self._bs_card_ata = {}
+        self.passed_signals.clear()

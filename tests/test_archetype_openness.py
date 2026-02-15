@@ -1996,3 +1996,131 @@ class TestSimpleAlsaMissing:
         tracker.record_missing([card], pick_number=9, pack_number=0)
         score_combined = tracker.get_scores()["Test"]["score"]
         assert score_combined < score_positive
+
+
+class TestPassedCardsTracking:
+    """Tests for passed cards tracking: cards the user doesn't pick."""
+
+    @staticmethod
+    def _make_config(**kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="simple",
+            pack_weights=[1.0, 0.66, 1.0],
+            archetypes=[Archetype(name="Goblins", cards={"Goblin Guide": 0.8, "Lightning Bolt": 0.3})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_pack_weight_inversion(self):
+        """Passed pack weights swap indices 0 and 1."""
+        tracker = OpennessTracker(self._make_config())
+        assert tracker.passed_pack_weights == [0.66, 1.0, 1.0]
+
+    def test_record_passed_produces_negative_score(self):
+        """Passing a card produces a negative passed score."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        scores = tracker.get_passed_scores()
+        assert scores["Goblins"]["score"] < 0.0
+
+    def test_record_passed_exact_formula(self):
+        """Verify formula: -(1/(ata + pick)) * card_weight * passed_pack_weight * 100."""
+        config = self._make_config(
+            pack_weights=[1.0, 0.5, 1.0],
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        tracker = OpennessTracker(config)
+        card = _make_card("Card", ata=4.0)
+        tracker.record_passed([card], pick_number=6, pack_number=0)
+        # passed_pack_weights = [0.5, 1.0, 1.0], pack 0 weight = 0.5
+        expected = -(1.0 / (4.0 + 6)) * 1.0 * 0.5 * 100  # -5.0
+        assert tracker.get_passed_scores()["Test"]["score"] == pytest.approx(expected)
+
+    def test_card_not_in_archetype_ignored(self):
+        """Cards not in any archetype produce no passed signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Random Card", ata=3.0)
+        tracker.record_passed([card], pick_number=5, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_zero_ata_skipped(self):
+        """Cards with ATA=0 produce no signal."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=0.0)
+        tracker.record_passed([card], pick_number=5, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_card_weight_scales_signal(self):
+        """Higher card_weight produces stronger passed signal."""
+        config_low = self._make_config(
+            archetypes=[Archetype(name="Test", cards={"Card": 0.2})])
+        tracker_low = OpennessTracker(config_low)
+        card = _make_card("Card", ata=5.0)
+        tracker_low.record_passed([card], pick_number=3, pack_number=0)
+
+        config_high = self._make_config(
+            archetypes=[Archetype(name="Test", cards={"Card": 0.9})])
+        tracker_high = OpennessTracker(config_high)
+        tracker_high.record_passed([card], pick_number=3, pack_number=0)
+
+        assert tracker_high.get_passed_scores()["Test"]["score"] < tracker_low.get_passed_scores()["Test"]["score"]
+
+    def test_passed_pack_weight_applied(self):
+        """Passed uses inverted pack weights (P2 gets P1's weight)."""
+        config = self._make_config(pack_weights=[1.0, 0.5, 1.0])
+        tracker = OpennessTracker(config)
+        card = _make_card("Goblin Guide", ata=5.0)
+
+        # Pack 1 (index 0): passed_weight = 0.5
+        tracker.record_passed([card], pick_number=3, pack_number=0)
+        score_p1 = tracker.get_passed_scores()["Goblins"]["score"]
+
+        tracker2 = OpennessTracker(config)
+        # Pack 2 (index 1): passed_weight = 1.0
+        tracker2.record_passed([card], pick_number=3, pack_number=1)
+        score_p2 = tracker2.get_passed_scores()["Goblins"]["score"]
+
+        # P2 should have stronger (more negative) signal
+        assert score_p2 < score_p1
+
+    def test_accumulation_across_picks(self):
+        """Passed scores accumulate across multiple picks."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=5.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        score_1 = tracker.get_passed_scores()["Goblins"]["score"]
+        tracker.record_passed([card], pick_number=3, pack_number=0)
+        score_2 = tracker.get_passed_scores()["Goblins"]["score"]
+        assert score_2 < score_1 < 0.0
+
+    def test_reset_clears_passed(self):
+        """Reset clears all passed signals."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=5, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+        tracker.reset()
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_get_top_passed(self):
+        """Top passed returns highest absolute signals."""
+        tracker = OpennessTracker(self._make_config())
+        guide = _make_card("Goblin Guide", ata=2.0)
+        bolt = _make_card("Lightning Bolt", ata=8.0)
+        tracker.record_passed([guide, bolt], pick_number=5, pack_number=0)
+        top = tracker.get_top_passed("Goblins", count=1)
+        assert len(top) == 1
+        # Goblin Guide has lower ATA and higher card_weight -> strongest signal
+        assert top[0]["card_name"] == "Goblin Guide"
+
+    def test_passed_independent_from_openness(self):
+        """Passed scores don't affect openness scores and vice versa."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=5, pack_number=0)
+        # Openness score should still be 0
+        assert tracker.get_scores()["Goblins"]["score"] == pytest.approx(0.0)
+        # Passed score should be negative
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
