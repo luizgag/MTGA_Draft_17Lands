@@ -1765,6 +1765,14 @@ class Overlay(ScaledWindow):
             if max_score == 0:
                 max_score = 1.0
 
+        passed_scores = self.openness_tracker.get_passed_scores()
+        passed_max = max(
+            (abs(passed_scores.get(name, {}).get("score", 0.0))
+             for name, _ in sorted_archetypes), default=1.0
+        )
+        if passed_max == 0:
+            passed_max = 1.0
+
         for i, (name, data) in enumerate(sorted_archetypes):
             score = data["score"]
             confidence = data.get("confidence", "high")
@@ -1836,6 +1844,35 @@ class Overlay(ScaledWindow):
             self.__bind_openness_tooltip(score_label, name)
             self.__bind_openness_tooltip(bar_canvas, name)
 
+            # Passed-cards bar (right side, grows left)
+            passed_score = passed_scores.get(name, {}).get("score", 0.0)
+            passed_bar_canvas = tkinter.Canvas(
+                self.openness_frame, width=80, height=12, highlightthickness=0
+            )
+            if passed_max > 0:
+                passed_bar_width = int(abs(passed_score) / passed_max * 80)
+            else:
+                passed_bar_width = 0
+            # Draw bar from right edge, growing left
+            passed_bar_canvas.create_rectangle(
+                80 - passed_bar_width, 0, 80, 12,
+                fill="#FFA726", outline=""
+            )
+            passed_bar_canvas.grid(row=i, column=3, padx=(4, 2))
+
+            passed_score_label = tkinter.Label(
+                self.openness_frame,
+                text=f"{passed_score:.1f}" if passed_score != 0.0 else "",
+                anchor=tkinter.W,
+                width=6,
+                fg=fg_color,
+            )
+            passed_score_label.grid(row=i, column=4, padx=(2, 4))
+
+            # Tooltip for passed bars
+            self.__bind_passed_tooltip(passed_bar_canvas, name)
+            self.__bind_passed_tooltip(passed_score_label, name)
+
     @staticmethod
     def _openness_fg_with_opacity(opacity: float) -> str:
         """Compute a foreground color with the given opacity (0-1) against a dark background.
@@ -1876,6 +1913,26 @@ class Overlay(ScaledWindow):
             if interval is not None:
                 lines.append(f"Range: {interval[0] * 100:.0f}% \u2013 {interval[1] * 100:.0f}%")
 
+            tooltip_text = "\n".join(lines)
+            self.__show_openness_tooltip(event, tooltip_text)
+
+        def on_leave(event):
+            self.__hide_openness_tooltip()
+
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
+    def __bind_passed_tooltip(self, widget, archetype_name):
+        """Bind hover tooltip showing top passed cards for an archetype."""
+        def on_enter(event):
+            if not self.openness_tracker:
+                return
+            contributors = self.openness_tracker.get_top_passed(archetype_name, count=3)
+            if not contributors:
+                return
+            lines = []
+            for c in contributors:
+                lines.append(f"{c['card_name']}: pick {c['pick_number']}, ATA {c['ata']:.1f} -> {c['signal']:.1f}")
             tooltip_text = "\n".join(lines)
             self.__show_openness_tooltip(event, tooltip_text)
 
