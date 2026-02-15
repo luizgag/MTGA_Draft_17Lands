@@ -167,8 +167,8 @@ class TestOpennessTrackerSimple:
         pack = [_make_card("Elf Lord", ata=7.0)]
         tracker.record_pack(pack, pick_number=3, pack_number=0)
         scores = tracker.get_scores()
-        # pick(3) <= ata(7): signal skipped for simple scoring
-        assert scores["BG Elves"]["score"] == pytest.approx(0.0, abs=0.01)
+        # (3-7)/(7+3)^2 * 0.9 * 1.0 * 100 = -3.6
+        assert scores["BG Elves"]["score"] == pytest.approx(-3.6, abs=0.01)
 
     def test_multi_archetype_card(self):
         tracker = OpennessTracker(SIMPLE_CONFIG)
@@ -1110,12 +1110,13 @@ class TestBayesianBetaScoring:
         assert width_late < width_early
 
 
-    def test_seen_card_no_negative_signal(self):
-        """Card seen before ATA produces no signal (not negative)."""
+    def test_seen_card_negative_signal(self):
+        """Card seen before ATA produces negative signal (pick < ata)."""
         tracker = OpennessTracker(BAYESIAN_CONFIG)
         tracker.record_pack([_make_card("Elf Lord", ata=9.0)], pick_number=5, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["BG Elves"]["score"] == pytest.approx(0.5)
+        # raw=(5-9)/(5+9)*0.9=-0.2571, beta=1.2571, score=1/(1+1.2571)≈0.443
+        assert scores["BG Elves"]["score"] == pytest.approx(0.443, abs=0.001)
 
     def test_new_positive_formula_dampened(self):
         """New formula (pick-ata)/(pick+ata) produces smaller signals than old (pick-ata)/ata.
@@ -1328,23 +1329,23 @@ class TestBayesianSurvivalWheeling:
         scores = tracker.get_scores()
         assert scores["Test"]["score"] > 0.0
 
-    def test_card_at_ata_produces_no_signal(self):
-        """Card at pick 3 with ATA 3: gated, no signal."""
+    def test_card_at_ata_produces_small_positive_signal(self):
+        """Card at pick 3 with ATA 3: small positive signal (survival model always >= 0)."""
         tracker = OpennessTracker(self._make_config())
         card = _make_card("Card", ata=3.0)
         card["rarity"] = "common"
         tracker.record_pack([card], pick_number=3, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["Test"]["score"] == pytest.approx(0.0)
+        assert scores["Test"]["score"] > 0.0
 
-    def test_card_before_ata_produces_no_signal(self):
-        """Card at pick 2 with ATA 5: gated, no signal."""
+    def test_card_before_ata_produces_small_positive_signal(self):
+        """Card at pick 2 with ATA 5: small positive signal (survival model always >= 0)."""
         tracker = OpennessTracker(self._make_config())
         card = _make_card("Card", ata=5.0)
         card["rarity"] = "common"
         tracker.record_pack([card], pick_number=2, pack_number=0)
         scores = tracker.get_scores()
-        assert scores["Test"]["score"] == pytest.approx(0.0)
+        assert scores["Test"]["score"] > 0.0
 
     def test_exact_wheeling_formula(self):
         """Verify exact log Bayes factor: ATA=3, pick=7, F=2, card_weight=1.0, common.
@@ -1923,11 +1924,11 @@ class TestSimpleAlsaMissing:
         assert score < 0.0
 
     def test_missing_exact_formula(self):
-        """Verify exact formula: -(1/ata) * card_weight * pack_weight * 100."""
+        """Verify exact formula: -(1/(ata + pick)) * card_weight * pack_weight * 100."""
         tracker = OpennessTracker(self._make_config())
         card = _make_card("Card", ata=4.0)
         tracker.record_missing([card], pick_number=9, pack_number=0)
-        expected = -(1.0 / 4.0) * 1.0 * 1.0 * 100  # -25.0
+        expected = -(1.0 / (4.0 + 9)) * 1.0 * 1.0 * 100  # -7.6923
         assert tracker.get_scores()["Test"]["score"] == pytest.approx(expected)
 
     def test_low_ata_stronger_negative_than_high_ata(self):
@@ -1965,7 +1966,7 @@ class TestSimpleAlsaMissing:
         tracker = OpennessTracker(config)
         card = _make_card("Card", ata=5.0)
         tracker.record_missing([card], pick_number=9, pack_number=0)
-        expected = -(1.0 / 5.0) * 1.0 * 2.0 * 100  # -40.0
+        expected = -(1.0 / (5.0 + 9)) * 1.0 * 2.0 * 100  # -14.2857
         assert tracker.get_scores()["Test"]["score"] == pytest.approx(expected)
 
     def test_missing_card_not_in_archetype_ignored(self):
@@ -2125,12 +2126,13 @@ class TestPassedCardsTracking:
         # Passed score should be negative
         assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
 
-    def test_pick_1_produces_no_signal(self):
-        """Pick 1 is a fresh pack — no one passed those cards."""
+    def test_pick_1_produces_signal(self):
+        """Pick 1 passed cards still produce a signal."""
         tracker = OpennessTracker(self._make_config())
         card = _make_card("Goblin Guide", ata=3.0)
         tracker.record_passed([card], pick_number=1, pack_number=0)
-        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+        # -(1/(3+1)) * 0.8 * 0.66 * 100 = -13.2
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(-13.2, abs=0.01)
 
     def test_passed_signal_includes_pack_number(self):
         """Each passed signal entry should include a pack_number field."""
