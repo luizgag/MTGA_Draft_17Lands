@@ -566,28 +566,17 @@ class OpennessTracker:
         ramp = self._hmm_pick_ramp_factor(pick_number)
         return log_bf * card_weight * pack_weight * rarity_weight * scale * ramp
 
-    def _simple_alsa_missing_emission(self, ata: float, card_weight: float,
-                                      pack_weight: float, pick_number: int) -> float:
-        """Negative signal for a missing card in simple_alsa scoring.
-
-        Cards taken by others indicate archetype competition.
-        Lower ATA (stronger cards) produce stronger negative signals
-        because early picks represent bigger archetype commitment.
-        """
-        raw_signal = -(pick_number/ata)
-        return raw_signal * card_weight * pack_weight * 100
-
     def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record negative signals from missing cards.
 
-        Active for bayesian_survival and simple_alsa scoring methods.
+        Active for bayesian_survival scoring method only.
 
         Args:
             missing_cards: list of card dicts that were in original pack but are now gone
             pick_number: 1-based pick position within the pack
             pack_number: 0-indexed pack number
         """
-        if self.scoring_method not in ("bayesian_survival", "simple_alsa"):
+        if self.scoring_method != "bayesian_survival":
             return
 
         pack_weight = self.pack_weights[pack_number] if pack_number < len(self.pack_weights) else 1.0
@@ -607,11 +596,8 @@ class OpennessTracker:
 
                 card_weight = archetype.cards[card_name]
 
-                if self.scoring_method == "simple_alsa":
-                    emission = self._simple_alsa_missing_emission(ata, card_weight, pack_weight, pick_number)
-                else:
-                    emission = self._bs_missing_emission(card, pick_number, ata, card_weight, pack_weight)
-                    self._bs_update_state(archetype.name, pick_number, emission)
+                emission = self._bs_missing_emission(card, pick_number, ata, card_weight, pack_weight)
+                self._bs_update_state(archetype.name, pick_number, emission)
 
                 self.signals.append({
                     "archetype": archetype.name,
