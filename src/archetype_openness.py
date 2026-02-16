@@ -574,7 +574,7 @@ class OpennessTracker:
         Lower ATA (stronger cards) produce stronger negative signals
         because early picks represent bigger archetype commitment.
         """
-        raw_signal = -(1.0 / (ata + pick_number))
+        raw_signal = -(pick_number/ata)
         return raw_signal * card_weight * pack_weight * 100
 
     def record_missing(self, missing_cards: List[Dict], pick_number: int, pack_number: int) -> None:
@@ -624,7 +624,7 @@ class OpennessTracker:
     def record_passed(self, passed_cards: List[Dict], pick_number: int, pack_number: int) -> None:
         """Record signals from cards the user passed (didn't pick).
 
-        Uses formula: -(1/(ata + pick_number)) * card_weight * passed_pack_weight * 100
+        Uses formula: -(ata / pick_number) * card_weight * passed_pack_weight * 100
 
         Args:
             passed_cards: list of card dicts the user chose not to pick
@@ -648,7 +648,7 @@ class OpennessTracker:
                     continue
 
                 card_weight = archetype.cards[card_name]
-                raw_signal = -(1.0 / (ata + pick_number))
+                raw_signal = -(ata / pick_number)
                 signal = raw_signal * card_weight * pack_weight * 100
 
                 self.passed_signals.append({
