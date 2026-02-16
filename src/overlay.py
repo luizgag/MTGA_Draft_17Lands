@@ -1720,26 +1720,31 @@ class Overlay(ScaledWindow):
 
                 # Detect passed cards: when taken_cards grows, a pick was made
                 current_taken_count = len(taken_cards)
-                if (current_taken_count > self._prev_taken_count
-                        and self._prev_pack_for_passed):
+                if current_taken_count > self._prev_taken_count:
                     new_picks = taken_cards[self._prev_taken_count:]
                     picked_names = [c.get(constants.DATA_FIELD_NAME, "") for c in new_picks]
-                    passed = list(self._prev_pack_for_passed)
-                    for name in picked_names:
-                        for j, c in enumerate(passed):
-                            if c.get(constants.DATA_FIELD_NAME, "") == name:
-                                passed.pop(j)
-                                break
-                    if passed:
+                    if self._prev_pack_for_passed:
+                        passed = list(self._prev_pack_for_passed)
+                        for name in picked_names:
+                            for j, c in enumerate(passed):
+                                if c.get(constants.DATA_FIELD_NAME, "") == name:
+                                    passed.pop(j)
+                                    break
+                        if passed:
+                            self.openness_tracker.record_passed(
+                                passed, self._prev_pick_for_passed,
+                                self._prev_pack_number_for_passed)
+                    elif pack_cards and pick_in_pack > 1:
+                        # First observed pick can arrive without a previous snapshot.
+                        # In that case, current pack cards are exactly the cards passed.
                         self.openness_tracker.record_passed(
-                            passed, self._prev_pick_for_passed,
-                            self._prev_pack_number_for_passed)
+                            list(pack_cards), pick_in_pack - 1, current_pack - 1)
 
                 # Revert passed signals for cards that wheeled back
                 pack_card_names = [c.get(constants.DATA_FIELD_NAME, "") for c in pack_cards]
                 self.openness_tracker.revert_returned(pack_card_names, current_pack - 1)
 
-                self._prev_pack_for_passed = pack_cards
+                self._prev_pack_for_passed = list(pack_cards)
                 self._prev_pick_for_passed = pick_in_pack
                 self._prev_pack_number_for_passed = current_pack - 1
                 self._prev_taken_count = current_taken_count

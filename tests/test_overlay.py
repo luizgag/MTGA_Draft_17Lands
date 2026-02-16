@@ -1,7 +1,9 @@
 import pytest
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
-from src.overlay import start_overlay
+from src.overlay import start_overlay, Overlay
+from src import constants
 
 @pytest.fixture(autouse=True)
 def catch_log_errors(caplog):
@@ -84,3 +86,60 @@ def test_overlay_init_does_not_check_for_updates(mock_scanner):
 
 
 #TODO: create a test for CreateCardToolTip
+
+
+def test_first_pick_records_passed_cards_without_previous_snapshot():
+    """Regression: first detected pick should record passed cards even with empty previous snapshot."""
+    overlay = Overlay.__new__(Overlay)
+
+    overlay.main_options_dict = {"Name": constants.DATA_FIELD_NAME}
+    overlay.column_2_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.column_3_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.column_4_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.column_5_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.column_6_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.column_7_selection = SimpleNamespace(get=lambda: "Name")
+    overlay.deck_filter_selection = SimpleNamespace(get=lambda: "Auto")
+
+    picked_card = {constants.DATA_FIELD_NAME: "Picked Card"}
+    current_pack_cards = [
+        {constants.DATA_FIELD_NAME: "Passed One"},
+        {constants.DATA_FIELD_NAME: "Passed Two"},
+    ]
+
+    draft = MagicMock()
+    draft.retrieve_taken_cards.return_value = [picked_card]
+    draft.retrieve_current_pack_and_pick.return_value = (1, 2)
+    draft.retrieve_current_limited_event.return_value = ("ECL", "Premier Draft")
+    draft.retrieve_current_pack_cards.return_value = current_pack_cards
+    draft.retrieve_current_picked_cards.return_value = {}
+    draft.retrieve_current_missing_cards.return_value = []
+    draft.retrieve_current_pick_in_pack.return_value = 2
+    draft.hindsight_mode = False
+    overlay.draft = draft
+
+    overlay.openness_tracker = MagicMock()
+    overlay._prev_pack_for_passed = []
+    overlay._prev_pick_for_passed = 0
+    overlay._prev_pack_number_for_passed = 0
+    overlay._prev_taken_count = 0
+    overlay._last_openness_key = (None, None)
+
+    overlay._Overlay__update_data_source_options = MagicMock()
+    overlay._Overlay__update_column_options = MagicMock()
+    overlay._Overlay__display_widgets = MagicMock()
+    overlay._Overlay__identify_auto_colors = MagicMock(return_value="Auto")
+    overlay._Overlay__update_current_draft_label = MagicMock()
+    overlay._Overlay__update_pack_pick_label = MagicMock()
+    overlay._Overlay__update_pack_table = MagicMock()
+    overlay._Overlay__update_missing_table = MagicMock()
+    overlay._Overlay__update_deck_stats_callback = MagicMock()
+    overlay._Overlay__update_taken_table = MagicMock()
+    overlay._Overlay__update_compare_table = MagicMock()
+    overlay._Overlay__update_openness_panel = MagicMock()
+    overlay._Overlay__open_taken_cards_window = MagicMock()
+    overlay._Overlay__replay_hindsight_openness = MagicMock()
+
+    overlay._Overlay__update_overlay_callback(enable_draft_search=False)
+
+    overlay.openness_tracker.record_passed.assert_called_once_with(current_pack_cards, 1, 0)
