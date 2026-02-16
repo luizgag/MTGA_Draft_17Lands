@@ -2224,3 +2224,46 @@ class TestGetPositiveScores:
         tracker.record_passed([card], pick_number=2, pack_number=0)
         positive = tracker.get_positive_scores()
         assert positive["Test"]["score"] == pytest.approx(0.0)
+
+
+class TestGetCombinedScores:
+    """Tests for get_combined_scores() — positive + passed signals."""
+
+    @staticmethod
+    def _make_config(**kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="simple_alsa",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_combined_equals_positive_plus_passed(self):
+        """Combined score = positive wheeling + passed card signals."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=5.0)
+        card["deck_colors"]["All Decks"]["alsa"] = 3.0
+        tracker.record_pack([card], pick_number=5, pack_number=0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+
+        positive = tracker.get_positive_scores()["Test"]["score"]
+        passed = tracker.get_passed_scores()["Test"]["score"]
+        combined = tracker.get_combined_scores()["Test"]["score"]
+        assert combined == pytest.approx(positive + passed)
+
+    def test_no_signals_returns_zero(self):
+        """No signals means zero combined score."""
+        tracker = OpennessTracker(self._make_config())
+        combined = tracker.get_combined_scores()
+        assert combined["Test"]["score"] == pytest.approx(0.0)
+
+    def test_positive_only_equals_positive(self):
+        """With no passed signals, combined == positive."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=5.0)
+        card["deck_colors"]["All Decks"]["alsa"] = 3.0
+        tracker.record_pack([card], pick_number=5, pack_number=0)
+        positive = tracker.get_positive_scores()["Test"]["score"]
+        combined = tracker.get_combined_scores()["Test"]["score"]
+        assert combined == pytest.approx(positive)

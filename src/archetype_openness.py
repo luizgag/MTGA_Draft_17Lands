@@ -383,6 +383,20 @@ class OpennessTracker:
             scores[arch.name] = {"score": total}
         return scores
 
+    def get_combined_scores(self) -> Dict[str, dict]:
+        """Get combined score (positive wheeling + passed card signals) per archetype.
+
+        Returns dict of {archetype_name: {"score": float}}.
+        """
+        positive = self.get_positive_scores()
+        passed = self.get_passed_scores()
+        scores = {}
+        for arch in self.archetypes:
+            p = positive.get(arch.name, {}).get("score", 0.0)
+            n = passed.get(arch.name, {}).get("score", 0.0)
+            scores[arch.name] = {"score": p + n}
+        return scores
+
     def _hmm_pick_ramp_factor(self, pick_number: int) -> float:
         """Warm-up ramp: reduces early-pick emissions, full weight after hmm_pick_ramp picks."""
         ramp_picks = max(2, self.config.hmm_pick_ramp)
