@@ -249,11 +249,11 @@ class OpennessTracker:
 
                 if pick_number <= alsa and self.scoring_method != "hmm_hybrid":
                     logger.debug(
-                        "    %s <- %s skipped (pick %.1f <= ATA %.1f)",
+                        "    %s <- %s skipped (pick %.1f <= ALSA %.1f)",
                         archetype.name,
                         card_name,
                         pick_number,
-                        ata,
+                        alsa,
                     )
                     continue
 
@@ -276,9 +276,9 @@ class OpennessTracker:
                     signal = emission
                 elif self.scoring_method == "simple_alsa":
                     if pick_number <= 8:
-                        raw_signal = (pick_number - alsa) / (alsa + pick_number) 
+                        raw_signal = (pick_number - alsa) * pick_number / alsa ** 2
                     elif pick_number >= 8 and ata <= pick_number:
-                        raw_signal = (pick_number - ata) / (ata + pick_number)**2
+                        raw_signal = (pick_number - ata) * pick_number / ata ** 2
                     else:
                         continue
 

@@ -230,11 +230,20 @@ class CardResult:
     def __format_win_rate(self, card, winrate_field, winrate_count, color):
         """The function will return a grade, rating, or win rate depending on the application's Result Format setting"""
         result = 0
-        # Produce a result that matches the Result Format setting
-        if self.configuration.settings.result_format == constants.RESULT_FORMAT_RATING:
+
+        # Force Rating format for specific win-rate fields when a deck filter is active
+        deck_filter = self.configuration.settings.deck_filter
+        if (deck_filter != constants.FILTER_OPTION_ALL_DECKS
+                and winrate_field in constants.FORCED_RATING_WIN_RATE_FIELDS):
+            effective_format = constants.RESULT_FORMAT_RATING
+        else:
+            effective_format = self.configuration.settings.result_format
+
+        # Produce a result that matches the effective format
+        if effective_format == constants.RESULT_FORMAT_RATING:
             result = self.__card_rating(
                 card, winrate_field, winrate_count, color)
-        elif self.configuration.settings.result_format == constants.RESULT_FORMAT_GRADE:
+        elif effective_format == constants.RESULT_FORMAT_GRADE:
             result = self.__card_grade(
                 card, winrate_field, winrate_count, color)
         else:

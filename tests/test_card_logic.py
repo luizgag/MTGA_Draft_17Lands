@@ -75,9 +75,49 @@ def test_otj_grades(otj_premier, card_name, colors, field, expected_grade):
     data_list = dataset.get_data_by_name([card_name])
     assert data_list
     
-    config = Configuration(settings=Settings(result_format=constants.RESULT_FORMAT_GRADE))
+    config = Configuration(settings=Settings(result_format=constants.RESULT_FORMAT_GRADE,
+                                              deck_filter=constants.FILTER_OPTION_ALL_DECKS))
     results = CardResult(metrics, None, config, 2)
     card_data = data_list[0]
     result_list = results.return_results([card_data], [colors],  [field])
-    
+
     assert result_list[0]["results"][0] == expected_grade
+
+FORCED_RATING_TESTS = [
+    # Filtered deck + GIHWR/GPWR/OHWR/GDWR with Percentage => forced to Rating
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GIHWR, True),
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GPWR, True),
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_OHWR, True),
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GDWR, True),
+    # Filtered deck + GIHWR with Grade => forced to Rating
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_GRADE, constants.DATA_FIELD_GIHWR, True),
+    # Filtered deck + GNSWR => NOT forced (stays Percentage)
+    ("Colossal Rattlewurm", "WG", constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GNSWR, False),
+    # All Decks + GIHWR => NOT forced (respects user format)
+    ("Colossal Rattlewurm", constants.FILTER_OPTION_ALL_DECKS, constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GIHWR, False),
+    ("Colossal Rattlewurm", constants.FILTER_OPTION_ALL_DECKS, constants.RESULT_FORMAT_GRADE, constants.DATA_FIELD_GIHWR, False),
+]
+
+@pytest.mark.parametrize("card_name, deck_filter, result_format, field, should_be_rating", FORCED_RATING_TESTS)
+def test_forced_rating_on_deck_filter(otj_premier, card_name, deck_filter, result_format, field, should_be_rating):
+    metrics, dataset = otj_premier
+    data_list = dataset.get_data_by_name([card_name])
+    assert data_list
+
+    config = Configuration(settings=Settings(result_format=result_format,
+                                              deck_filter=deck_filter))
+    results = CardResult(metrics, None, config, 2)
+    card_data = data_list[0]
+
+    color_filter = deck_filter
+    result_list = results.return_results([card_data], [color_filter], [field])
+    result_value = result_list[0]["results"][0]
+
+    if should_be_rating:
+        assert isinstance(result_value, float), f"Expected Rating (float), got {type(result_value).__name__}: {result_value}"
+        assert 0.1 <= result_value <= 5.0
+    else:
+        if result_format == constants.RESULT_FORMAT_WIN_RATE:
+            assert isinstance(result_value, float)
+        elif result_format == constants.RESULT_FORMAT_GRADE:
+            assert isinstance(result_value, str)
