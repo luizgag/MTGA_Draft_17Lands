@@ -233,7 +233,7 @@ class CardResult:
 
         # Force Rating format for specific win-rate fields when a deck filter is active
         deck_filter = self.configuration.settings.deck_filter
-        if (deck_filter != constants.FILTER_OPTION_ALL_DECKS
+        if (deck_filter not in (constants.FILTER_OPTION_ALL_DECKS, constants.FILTER_OPTION_AUTO)
                 and winrate_field in constants.FORCED_RATING_WIN_RATE_FIELDS):
             effective_format = constants.RESULT_FORMAT_RATING
         else:

@@ -96,6 +96,8 @@ FORCED_RATING_TESTS = [
     # All Decks + GIHWR => NOT forced (respects user format)
     ("Colossal Rattlewurm", constants.FILTER_OPTION_ALL_DECKS, constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GIHWR, False),
     ("Colossal Rattlewurm", constants.FILTER_OPTION_ALL_DECKS, constants.RESULT_FORMAT_GRADE, constants.DATA_FIELD_GIHWR, False),
+    # Auto + GIHWR => NOT forced (respects user format)
+    ("Colossal Rattlewurm", constants.FILTER_OPTION_AUTO, constants.RESULT_FORMAT_WIN_RATE, constants.DATA_FIELD_GIHWR, False),
 ]
 
 @pytest.mark.parametrize("card_name, deck_filter, result_format, field, should_be_rating", FORCED_RATING_TESTS)
@@ -109,7 +111,7 @@ def test_forced_rating_on_deck_filter(otj_premier, card_name, deck_filter, resul
     results = CardResult(metrics, None, config, 2)
     card_data = data_list[0]
 
-    color_filter = deck_filter
+    color_filter = constants.FILTER_OPTION_ALL_DECKS if deck_filter == constants.FILTER_OPTION_AUTO else deck_filter
     result_list = results.return_results([card_data], [color_filter], [field])
     result_value = result_list[0]["results"][0]
 
