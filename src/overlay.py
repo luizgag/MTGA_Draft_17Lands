@@ -1781,131 +1781,80 @@ class Overlay(ScaledWindow):
         if not self.openness_tracker:
             return
 
-        # Clear existing labels
         for widget in self.openness_frame.winfo_children():
             widget.destroy()
 
-        scores = self.openness_tracker.get_scores()
-        sorted_archetypes = sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
-        scoring_method = self.openness_tracker.scoring_method
-
-        # Opacity map for confidence levels
-        opacity_map = {"none": 0.4, "low": 0.6, "medium": 0.8, "high": 1.0}
-
-        if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
-            max_score = 1.0  # P(open) style methods are always 0-1
-        else:
-            max_score = max(abs(s["score"]) for _, s in sorted_archetypes) if sorted_archetypes else 1.0
-            if max_score == 0:
-                max_score = 1.0
-
+        positive_scores = self.openness_tracker.get_positive_scores()
         passed_scores = self.openness_tracker.get_passed_scores()
-        passed_max = max(
-            (abs(passed_scores.get(name, {}).get("score", 0.0))
-             for name, _ in sorted_archetypes), default=1.0
+        combined_scores = self.openness_tracker.get_combined_scores()
+
+        # Sort by combined score descending
+        sorted_names = sorted(
+            combined_scores.keys(),
+            key=lambda n: combined_scores[n]["score"],
+            reverse=True,
         )
-        if passed_max == 0:
-            passed_max = 1.0
 
-        for i, (name, data) in enumerate(sorted_archetypes):
-            score = data["score"]
-            confidence = data.get("confidence", "high")
-            opacity = opacity_map.get(confidence, 1.0)
+        # Compute max values for bar scaling
+        pos_max = max((abs(positive_scores.get(n, {}).get("score", 0.0)) for n in sorted_names), default=1.0) or 1.0
+        pass_max = max((abs(passed_scores.get(n, {}).get("score", 0.0)) for n in sorted_names), default=1.0) or 1.0
+        comb_max = max((abs(combined_scores.get(n, {}).get("score", 0.0)) for n in sorted_names), default=1.0) or 1.0
 
-            # Compute foreground color with opacity
-            fg_color = self._openness_fg_with_opacity(opacity)
+        for i, name in enumerate(sorted_names):
+            pos_score = positive_scores.get(name, {}).get("score", 0.0)
+            pass_score = passed_scores.get(name, {}).get("score", 0.0)
+            comb_score = combined_scores.get(name, {}).get("score", 0.0)
 
+            # Archetype name
             name_label = tkinter.Label(
-                self.openness_frame,
-                text=name,
-                anchor=tkinter.W,
-                width=15,
-                fg=fg_color,
+                self.openness_frame, text=name, anchor=tkinter.W, width=15,
             )
             name_label.grid(row=i, column=0, sticky="w", padx=(4, 2))
 
-            # Format score based on method
-            if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
-                interval = data.get("interval")
-                if interval is not None:
-                    half_width = (interval[1] - interval[0]) / 2 * 100
-                    score_text = f"{score * 100:.0f}% \u00b1{half_width:.0f}%"
-                else:
-                    score_text = f"{score * 100:.0f}%"
-            elif scoring_method == "bayesian_survival":
-                interval = data.get("interval")
-                if interval is not None:
-                    half_width = (interval[1] - interval[0]) / 2
-                    score_text = f"{score:+.2f} \u00b1{half_width:.2f}"
-                else:
-                    score_text = f"{score:+.2f}"
-            else:
-                score_text = f"{score:+.1f}"
+            # --- Column 1: Positive bar (green, grows right) ---
+            bar_w = 60
+            pos_bar = tkinter.Canvas(self.openness_frame, width=bar_w, height=12, highlightthickness=0)
+            pos_fill = int(abs(pos_score) / pos_max * bar_w) if pos_max else 0
+            pos_bar.create_rectangle(0, 0, pos_fill, 12, fill="#4CAF50", outline="")
+            pos_bar.grid(row=i, column=1, padx=(6, 0))
 
-            score_label = tkinter.Label(
-                self.openness_frame,
-                text=score_text,
-                anchor=tkinter.E,
-                width=12,
-                fg=fg_color,
+            pos_label = tkinter.Label(
+                self.openness_frame, text=f"{pos_score:+.1f}" if pos_score != 0.0 else "",
+                anchor=tkinter.W, width=6,
             )
-            score_label.grid(row=i, column=1, padx=2)
+            pos_label.grid(row=i, column=2, padx=(0, 4))
 
-            # Visual bar
-            if scoring_method in {"bayesian_beta", "hmm_hybrid"}:
-                bar_width = int(score * 80)
-                bar_color = self._openness_bayesian_bar_color(score)
-            elif scoring_method == "bayesian_survival":
-                bar_width = int(abs(score) / max_score * 80) if max_score else 0
-                if score > 0.5:
-                    bar_color = "#4CAF50"
-                elif score < -0.5:
-                    bar_color = "#F44336"
-                else:
-                    bar_color = "#888888"
-            else:
-                bar_width = int(abs(score) / max_score * 80) if max_score else 0
-                bar_color = "#4CAF50" if score > 0 else "#F44336" if score < 0 else "#888888"
+            # --- Column 2: Passed bar (orange, grows left from right edge) ---
+            pass_bar = tkinter.Canvas(self.openness_frame, width=bar_w, height=12, highlightthickness=0)
+            pass_fill = int(abs(pass_score) / pass_max * bar_w) if pass_max else 0
+            pass_bar.create_rectangle(bar_w - pass_fill, 0, bar_w, 12, fill="#FFA726", outline="")
+            pass_bar.grid(row=i, column=3, padx=(6, 0))
 
-            bar_canvas = tkinter.Canvas(
-                self.openness_frame, width=80, height=12, highlightthickness=0
+            pass_label = tkinter.Label(
+                self.openness_frame, text=f"{pass_score:.1f}" if pass_score != 0.0 else "",
+                anchor=tkinter.W, width=6,
             )
-            bar_canvas.create_rectangle(0, 0, bar_width, 12, fill=bar_color, outline="")
-            bar_canvas.grid(row=i, column=2, padx=(2, 4))
+            pass_label.grid(row=i, column=4, padx=(0, 4))
 
-            # Tooltip binding for top contributors
+            # --- Column 3: Combined bar (green/red) ---
+            comb_bar = tkinter.Canvas(self.openness_frame, width=bar_w, height=12, highlightthickness=0)
+            comb_fill = int(abs(comb_score) / comb_max * bar_w) if comb_max else 0
+            comb_color = "#4CAF50" if comb_score > 0 else "#F44336" if comb_score < 0 else "#888888"
+            comb_bar.create_rectangle(0, 0, comb_fill, 12, fill=comb_color, outline="")
+            comb_bar.grid(row=i, column=5, padx=(6, 0))
+
+            comb_label = tkinter.Label(
+                self.openness_frame, text=f"{comb_score:+.1f}" if comb_score != 0.0 else "",
+                anchor=tkinter.W, width=6,
+            )
+            comb_label.grid(row=i, column=6, padx=(0, 4))
+
+            # Tooltips
             self.__bind_openness_tooltip(name_label, name)
-            self.__bind_openness_tooltip(score_label, name)
-            self.__bind_openness_tooltip(bar_canvas, name)
-
-            # Passed-cards bar (right side, grows left)
-            passed_score = passed_scores.get(name, {}).get("score", 0.0)
-            passed_bar_canvas = tkinter.Canvas(
-                self.openness_frame, width=80, height=12, highlightthickness=0
-            )
-            if passed_max > 0:
-                passed_bar_width = int(abs(passed_score) / passed_max * 80)
-            else:
-                passed_bar_width = 0
-            # Draw bar from right edge, growing left
-            passed_bar_canvas.create_rectangle(
-                80 - passed_bar_width, 0, 80, 12,
-                fill="#FFA726", outline=""
-            )
-            passed_bar_canvas.grid(row=i, column=3, padx=(4, 2))
-
-            passed_score_label = tkinter.Label(
-                self.openness_frame,
-                text=f"{passed_score:.1f}" if passed_score != 0.0 else "",
-                anchor=tkinter.W,
-                width=6,
-                fg=fg_color,
-            )
-            passed_score_label.grid(row=i, column=4, padx=(2, 4))
-
-            # Tooltip for passed bars
-            self.__bind_passed_tooltip(passed_bar_canvas, name)
-            self.__bind_passed_tooltip(passed_score_label, name)
+            self.__bind_openness_tooltip(pos_bar, name)
+            self.__bind_passed_tooltip(pass_bar, name)
+            self.__bind_passed_tooltip(pass_label, name)
+            self.__bind_openness_tooltip(comb_bar, name)
 
     @staticmethod
     def _openness_fg_with_opacity(opacity: float) -> str:
