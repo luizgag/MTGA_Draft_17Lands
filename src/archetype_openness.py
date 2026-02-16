@@ -371,6 +371,17 @@ class OpennessTracker:
             return self._scores_bayesian_survival()
         return self._scores_simple()
 
+    def get_positive_scores(self) -> Dict[str, dict]:
+        """Get sum of positive (wheeling) signals per archetype.
+
+        Returns dict of {archetype_name: {"score": float}}.
+        Only includes signals from record_pack (self.signals), not passed_signals.
+        """
+        scores = {}
+        for arch in self.archetypes:
+            total = sum(s["signal"] for s in self.signals if s["archetype"] == arch.name)
+            scores[arch.name] = {"score": total}
+        return scores
 
     def _hmm_pick_ramp_factor(self, pick_number: int) -> float:
         """Warm-up ramp: reduces early-pick emissions, full weight after hmm_pick_ramp picks."""

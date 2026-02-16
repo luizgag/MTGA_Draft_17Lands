@@ -2186,3 +2186,41 @@ class TestSimpleAlsaMissingRemoved:
         tracker.record_missing([card], pick_number=9, pack_number=0)
         assert tracker.get_scores()["Test"]["score"] == pytest.approx(0.0)
         assert len(tracker.signals) == 0
+
+
+class TestGetPositiveScores:
+    """Tests for get_positive_scores() — returns only positive wheeling signals."""
+
+    @staticmethod
+    def _make_config(**kwargs):
+        defaults = dict(
+            set_code="TST",
+            scoring_method="simple_alsa",
+            archetypes=[Archetype(name="Test", cards={"Card": 1.0})],
+        )
+        defaults.update(kwargs)
+        return ArchetypeConfig(**defaults)
+
+    def test_positive_signals_only(self):
+        """get_positive_scores returns sum of positive signals, ignores negative."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=5.0)
+        card["deck_colors"]["All Decks"]["alsa"] = 3.0
+        # pick 5 > alsa 3.0 -> positive signal
+        tracker.record_pack([card], pick_number=5, pack_number=0)
+        positive = tracker.get_positive_scores()
+        assert positive["Test"]["score"] > 0.0
+
+    def test_no_signals_returns_zero(self):
+        """No signals means zero positive score."""
+        tracker = OpennessTracker(self._make_config())
+        positive = tracker.get_positive_scores()
+        assert positive["Test"]["score"] == pytest.approx(0.0)
+
+    def test_passed_signals_not_included(self):
+        """Passed signals should not appear in positive scores."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Card", ata=3.0)
+        tracker.record_passed([card], pick_number=2, pack_number=0)
+        positive = tracker.get_positive_scores()
+        assert positive["Test"]["score"] == pytest.approx(0.0)
