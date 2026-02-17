@@ -247,7 +247,7 @@ class OpennessTracker:
                     )
                     continue
 
-                if pick_number <= alsa and self.scoring_method != "hmm_hybrid":
+                if pick_number <= alsa and self.scoring_method not in ["hmm_hybrid","simple"]:
                     logger.debug(
                         "    %s <- %s skipped (pick %.1f <= ALSA %.1f)",
                         archetype.name,
@@ -284,7 +284,7 @@ class OpennessTracker:
 
                     signal = raw_signal * card_weight * pack_weight * 100
                 else:  # simple
-                    raw_signal = (pick_number - ata) / (ata + pick_number)**2 
+                    raw_signal = pick_number / ata ** 2
                     signal = raw_signal * card_weight * pack_weight * 100
 
                 signal_count += 1
@@ -659,7 +659,7 @@ class OpennessTracker:
                     continue
 
                 card_weight = archetype.cards[card_name]
-                raw_signal = -(pick_number / ata)
+                raw_signal = -(pick_number / ata ** 2)
                 signal = raw_signal * card_weight * pack_weight * 100
 
                 self.passed_signals.append({
