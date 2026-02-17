@@ -1788,10 +1788,10 @@ class Overlay(ScaledWindow):
         passed_scores = self.openness_tracker.get_passed_scores()
         combined_scores = self.openness_tracker.get_combined_scores()
 
-        # Sort by combined score descending
+        # Sort by positive signals descending
         sorted_names = sorted(
-            combined_scores.keys(),
-            key=lambda n: combined_scores[n]["score"],
+            positive_scores.keys(),
+            key=lambda n: positive_scores[n]["score"],
             reverse=True,
         )
 

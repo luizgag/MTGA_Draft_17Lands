@@ -659,7 +659,7 @@ class OpennessTracker:
                     continue
 
                 card_weight = archetype.cards[card_name]
-                raw_signal = -(ata / pick_number)
+                raw_signal = -(pick_number / ata)
                 signal = raw_signal * card_weight * pack_weight * 100
 
                 self.passed_signals.append({
