@@ -11,6 +11,8 @@ import ssl
 import itertools
 import re
 import sqlite3
+import zipfile
+import io
 from typing import List
 from src import constants
 from src.logger import create_logger
@@ -347,6 +349,52 @@ def check_date(date):
     except Exception:
         result = False
     return result
+
+def retrieve_goatbots_prices(set_code: str) -> dict:
+    """Download GoatBots price data and return {card_name: price} for the given set.
+
+    Downloads the official GoatBots card-definitions and price-history ZIP files,
+    matches cards by name and set code (non-foil only), and returns the highest
+    price when multiple versions exist.
+
+    Returns an empty dict if the download fails.
+    """
+    try:
+        context = ssl.SSLContext(protocol=ssl.PROTOCOL_TLS_CLIENT)
+        context.load_default_certs()
+
+        # Download both ZIP files
+        defs_data = urllib.request.urlopen(
+            constants.GOATBOTS_CARD_DEFINITIONS_URL, context=context).read()
+        prices_data = urllib.request.urlopen(
+            constants.GOATBOTS_PRICE_HISTORY_URL, context=context).read()
+
+        # Extract JSON from ZIPs
+        with zipfile.ZipFile(io.BytesIO(defs_data)) as zf:
+            defs_json = json.loads(zf.read(zf.namelist()[0]))
+
+        with zipfile.ZipFile(io.BytesIO(prices_data)) as zf:
+            prices_json = json.loads(zf.read(zf.namelist()[0]))
+
+        # Build {card_name: highest_price} for matching set (non-foil only)
+        upper_set = set_code.upper()
+        result = {}
+        for mtgo_id, card_def in defs_json.items():
+            if card_def.get("foil", 0) != 0:
+                continue
+            if card_def.get("cardset", "").upper() != upper_set:
+                continue
+            name = card_def.get("name", "")
+            price = prices_json.get(mtgo_id, 0.0)
+            if name and price > result.get(name, 0.0):
+                result[name] = price
+
+        return result
+
+    except Exception as error:
+        logger.error("Failed to retrieve GoatBots prices: %s", error)
+        return {}
+
 
 class FileExtractor:
     '''Class that handles the creation of set files and the retrieval of platform information'''
