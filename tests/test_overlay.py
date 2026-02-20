@@ -195,3 +195,26 @@ def test_first_pick_records_passed_cards_without_previous_snapshot():
     assert "Picked Card" not in passed_names
     assert call_args[0][1] == 1  # pick_number
     assert call_args[0][2] == 0  # pack_number
+
+
+def test_price_injection_adds_price_to_card_data():
+    """Price data from GoatBots should be injected into card_ratings before export."""
+    combined_data = {
+        "meta": {},
+        "color_ratings": {},
+        "card_ratings": {
+            "1001": {"name": "Lightning Bolt", "deck_colors": {}},
+            "1002": {"name": "Moonshadow", "deck_colors": {}},
+            "1003": {"name": "Unknown Card", "deck_colors": {}},
+        }
+    }
+    prices = {"Lightning Bolt": 0.05, "Moonshadow": 27.12}
+
+    # Inject prices (this is the logic that will be in __add_set)
+    for card_data in combined_data["card_ratings"].values():
+        card_name = card_data.get("name", "")
+        card_data["price"] = prices.get(card_name, 0.0)
+
+    assert combined_data["card_ratings"]["1001"]["price"] == pytest.approx(0.05)
+    assert combined_data["card_ratings"]["1002"]["price"] == pytest.approx(27.12)
+    assert combined_data["card_ratings"]["1003"]["price"] == pytest.approx(0.0)

@@ -18,7 +18,7 @@ from src.configuration import read_configuration, write_configuration, reset_con
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
-from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets, delete_old_set_files
+from src.file_extractor import FileExtractor, search_arena_log_locations, retrieve_arena_directory, merge_datasets, delete_old_set_files, retrieve_goatbots_prices
 from src.utils import retrieve_local_set_list, open_file, clean_string, AutocompleteEntry
 from src import constants
 from src.logger import create_logger
@@ -3400,6 +3400,17 @@ class Overlay(ScaledWindow):
                         popup.update()
                         merged = merge_datasets(all_datasets, all_weights)
                         self.extractor.combined_data = merged
+
+                # Fetch and inject GoatBots prices (MTGO only)
+                if (self.configuration.settings.platform == constants.PLATFORM_MTGO
+                        and self.configuration.settings.price_enabled):
+                    status.set("Downloading MTGO Prices")
+                    popup.update()
+                    prices = retrieve_goatbots_prices(set_code)
+                    if prices:
+                        for card_data in self.extractor.combined_data.get("card_ratings", {}).values():
+                            card_name = card_data.get("name", "")
+                            card_data["price"] = prices.get(card_name, 0.0)
 
                 if not self.extractor.export_card_data():
                     result = False
