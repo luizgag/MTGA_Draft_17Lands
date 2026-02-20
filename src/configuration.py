@@ -66,6 +66,8 @@ class Settings(BaseModel):
     platform: str = constants.PLATFORM_MTGA
     mtgo_log_folder: str = ""
     mtgo_hindsight_enabled: bool = False
+    price_enabled: bool = True
+    price_threshold: float = constants.PRICE_THRESHOLD_DEFAULT
     best_in_column_threshold: float = constants.BEST_IN_COLUMN_THRESHOLD_DEFAULT
     set_sources: Dict[str, List[DatasetSource]] = Field(default_factory=dict)
 

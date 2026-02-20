@@ -44,6 +44,16 @@ PLATFORM_MTGA = "MTGA"
 PLATFORM_MTGO = "MTGO"
 PLATFORM_LIST = [PLATFORM_MTGA, PLATFORM_MTGO]
 
+# GoatBots price data URLs
+GOATBOTS_CARD_DEFINITIONS_URL = "https://www.goatbots.com/download/prices/card-definitions.zip"
+GOATBOTS_PRICE_HISTORY_URL = "https://www.goatbots.com/download/prices/price-history.zip"
+
+# Price data field
+DATA_FIELD_PRICE = "price"
+
+# Default price threshold in MTGO event tickets
+PRICE_THRESHOLD_DEFAULT = 3.0
+
 LIMITED_TYPE_STRING_MTGO_DRAFT = "MtgoDraft"
 
 URL_17LANDS = "https://www.17lands.com"
