@@ -89,7 +89,12 @@ def test_overlay_init_does_not_check_for_updates(mock_scanner):
 
 
 def test_first_pick_records_passed_cards_without_previous_snapshot():
-    """Regression: first detected pick should record passed cards even with empty previous snapshot."""
+    """Regression: first detected pick should record passed cards even with empty previous snapshot.
+
+    The overlay uses the scanner's initial_pack data to recover what the pack
+    contained before the pick was made. When initial_pack is available, the
+    passed cards (initial_pack minus picked) are recorded.
+    """
     overlay = Overlay.__new__(Overlay)
 
     overlay.main_options_dict = {"Name": constants.DATA_FIELD_NAME}
@@ -106,6 +111,12 @@ def test_first_pick_records_passed_cards_without_previous_snapshot():
         {constants.DATA_FIELD_NAME: "Passed One"},
         {constants.DATA_FIELD_NAME: "Passed Two"},
     ]
+    # The scanner's initial_pack for pick 1 contains all 3 cards
+    initial_pack_cards = [
+        {constants.DATA_FIELD_NAME: "Picked Card"},
+        {constants.DATA_FIELD_NAME: "Passed One"},
+        {constants.DATA_FIELD_NAME: "Passed Two"},
+    ]
 
     draft = MagicMock()
     draft.retrieve_taken_cards.return_value = [picked_card]
@@ -115,6 +126,7 @@ def test_first_pick_records_passed_cards_without_previous_snapshot():
     draft.retrieve_current_picked_cards.return_value = {}
     draft.retrieve_current_missing_cards.return_value = []
     draft.retrieve_current_pick_in_pack.return_value = 2
+    draft.retrieve_initial_pack_cards_for_pick.return_value = initial_pack_cards
     draft.hindsight_mode = False
     overlay.draft = draft
 
@@ -142,4 +154,15 @@ def test_first_pick_records_passed_cards_without_previous_snapshot():
 
     overlay._Overlay__update_overlay_callback(enable_draft_search=False)
 
-    overlay.openness_tracker.record_passed.assert_called_once_with(current_pack_cards, 1, 0)
+    # Verify the fallback used initial_pack for pick 1
+    draft.retrieve_initial_pack_cards_for_pick.assert_called_once_with(1)
+    # record_passed should be called with initial_pack minus picked card
+    overlay.openness_tracker.record_passed.assert_called_once()
+    call_args = overlay.openness_tracker.record_passed.call_args
+    passed_cards = call_args[0][0]
+    passed_names = [c[constants.DATA_FIELD_NAME] for c in passed_cards]
+    assert "Passed One" in passed_names
+    assert "Passed Two" in passed_names
+    assert "Picked Card" not in passed_names
+    assert call_args[0][1] == 1  # pick_number
+    assert call_args[0][2] == 0  # pack_number

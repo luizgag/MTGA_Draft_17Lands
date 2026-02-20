@@ -2147,6 +2147,38 @@ class TestRevertReturned:
         assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
         assert tracker.get_passed_scores()["Izzet"]["score"] == pytest.approx(0.0)
 
+    def test_revert_with_current_pick_skips_same_pick(self):
+        """When current_pick is provided, signals at that pick are not reverted."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=1, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+
+        # Revert with current_pick=1: only reverts pick_number < 1 → nothing
+        tracker.revert_returned(["Goblin Guide"], pack_number=0, current_pick=1)
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+
+    def test_revert_with_current_pick_allows_earlier_pick(self):
+        """When current_pick is provided, signals from earlier picks ARE reverted."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=1, pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] < 0.0
+
+        # Revert with current_pick=9: pick_number 1 < 9 → reverted
+        tracker.revert_returned(["Goblin Guide"], pack_number=0, current_pick=9)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
+    def test_revert_without_current_pick_reverts_all(self):
+        """Without current_pick (legacy behavior), all matching signals are reverted."""
+        tracker = OpennessTracker(self._make_config())
+        card = _make_card("Goblin Guide", ata=3.0)
+        tracker.record_passed([card], pick_number=1, pack_number=0)
+
+        # No current_pick → legacy behavior, reverts everything
+        tracker.revert_returned(["Goblin Guide"], pack_number=0)
+        assert tracker.get_passed_scores()["Goblins"]["score"] == pytest.approx(0.0)
+
 
 class TestDoubleRecordingPrevention:
     """Tests documenting that record_pack doubles signals when called twice,
@@ -2267,3 +2299,394 @@ class TestGetCombinedScores:
         positive = tracker.get_positive_scores()["Test"]["score"]
         combined = tracker.get_combined_scores()["Test"]["score"]
         assert combined == pytest.approx(positive)
+
+
+# --- Passed Cards Detection Timing Tests ---
+
+class PassedCardsSimulator:
+    """Simulates overlay's passed-cards detection loop for testing.
+
+    Mirrors the detection algorithm from overlay.py exactly,
+    allowing us to test timing/batching behavior without the full Tkinter UI.
+
+    The simulator also models the scanner's initial_pack data. Call
+    set_initial_pack() before update() to register what a pack contained
+    when first shown (simulating the scanner storing initial_pack[pack_index]).
+    """
+
+    def __init__(self, tracker, number_of_players=8):
+        self.tracker = tracker
+        self._prev_pack_for_passed = []
+        self._prev_pick_for_passed = 0
+        self._prev_pack_number_for_passed = 0
+        self._prev_taken_count = 0
+        self._number_of_players = number_of_players
+        # Simulates scanner's initial_pack[pack_index]
+        self._initial_packs = {}
+
+    def set_initial_pack(self, pick_number, cards):
+        """Register the initial pack contents for a given pick number.
+
+        This simulates the scanner's initial_pack[pack_index] being set when
+        the pack log line is processed. Call this before update() for each
+        pack that the scanner would have seen.
+        """
+        pack_index = max(pick_number - 1, 0) % self._number_of_players
+        self._initial_packs[pack_index] = list(cards)
+
+    def _retrieve_initial_pack(self, pick_number):
+        """Simulate scanner's retrieve_initial_pack_cards_for_pick()."""
+        pack_index = max(pick_number - 1, 0) % self._number_of_players
+        return list(self._initial_packs.get(pack_index, []))
+
+    def update(self, taken_cards, pack_cards, pick_in_pack, current_pack):
+        """One cycle of the overlay update loop.
+
+        Args:
+            taken_cards: list of card dicts the user has taken so far
+            pack_cards: list of card dicts currently shown in the pack
+            pick_in_pack: 1-based pick position within the current pack
+            current_pack: 1-based pack number (converted to 0-based internally)
+        """
+        current_taken_count = len(taken_cards)
+        if current_taken_count > self._prev_taken_count:
+            num_new_picks = current_taken_count - self._prev_taken_count
+            new_picks = taken_cards[self._prev_taken_count:]
+            picked_names = [c.get("name", "") for c in new_picks]
+            if self._prev_pack_for_passed:
+                passed = list(self._prev_pack_for_passed)
+                for name in picked_names:
+                    for j, c in enumerate(passed):
+                        if c.get("name", "") == name:
+                            passed.pop(j)
+                            break
+                if passed:
+                    self.tracker.record_passed(
+                        passed, self._prev_pick_for_passed,
+                        self._prev_pack_number_for_passed)
+            else:
+                # No previous snapshot — use scanner's initial_pack
+                fallback_pick = max(pick_in_pack - num_new_picks, 1)
+                initial = self._retrieve_initial_pack(fallback_pick)
+                if initial:
+                    passed = list(initial)
+                    for name in picked_names:
+                        for j, c in enumerate(passed):
+                            if c.get("name", "") == name:
+                                passed.pop(j)
+                                break
+                    if passed:
+                        self.tracker.record_passed(
+                            passed, fallback_pick, current_pack - 1)
+
+        # Revert passed signals for cards that wheeled back
+        pack_card_names = [c.get("name", "") for c in pack_cards]
+        self.tracker.revert_returned(pack_card_names, current_pack - 1,
+                                     current_pick=pick_in_pack)
+
+        self._prev_pack_for_passed = list(pack_cards)
+        self._prev_pick_for_passed = pick_in_pack
+        self._prev_pack_number_for_passed = current_pack - 1
+        self._prev_taken_count = current_taken_count
+
+
+class TestPassedCardsDetection:
+    """Integration tests for the overlay's passed-cards detection timing.
+
+    These tests exercise the detection algorithm (mirrored in PassedCardsSimulator)
+    under different timing scenarios to document known behaviors and limitations.
+    """
+
+    DETECTION_CONFIG = ArchetypeConfig(
+        set_code="TST",
+        scoring_method="simple",
+        pack_weights=[1.0, 1.0, 1.0],
+        archetypes=[
+            Archetype(
+                name="Goblins",
+                color_pair="RG",
+                auto_weights=False,
+                cards={
+                    "Goblin Guide": 0.9,
+                    "Raging Goblin": 0.7,
+                    "Goblin Piker": 0.5,
+                    "Shock": 0.3,
+                    "Lightning Bolt": 0.4,
+                    "Goblin Warchief": 0.8,
+                    "Mogg Fanatic": 0.6,
+                },
+            ),
+        ],
+    )
+
+    @staticmethod
+    def _pack(*names_and_atas):
+        """Build a list of card dicts from (name, ata) pairs."""
+        return [_make_card(name, ata) for name, ata in names_and_atas]
+
+    def test_single_pick_per_cycle(self):
+        """Happy path: pack shown in cycle 1, pick detected in cycle 2.
+
+        When the overlay sees the pack first and the pick next, the previous
+        snapshot is available and passed cards are correctly recorded.
+
+        Note: In Arena, each pick shows a DIFFERENT physical pack. The next
+        pack's cards don't overlap with the previous pack, so revert_returned
+        doesn't remove the passed signals.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Pack A contains 3 cards — shown at pick 1
+        pack_a = self._pack(("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0))
+
+        # Cycle 1: pack A is shown, no picks yet
+        sim.update(taken_cards=[], pack_cards=pack_a, pick_in_pack=1, current_pack=1)
+        assert len(tracker.passed_signals) == 0
+
+        # Cycle 2: user picked Goblin Guide — now sees pack B (different physical pack)
+        taken = [_make_card("Goblin Guide", 2.0)]
+        pack_b = self._pack(("Goblin Piker", 6.0), ("Lightning Bolt", 3.0))
+        sim.update(taken_cards=taken, pack_cards=pack_b, pick_in_pack=2, current_pack=1)
+
+        # Raging Goblin and Shock should be recorded as passed at pick=1, pack=0
+        # (they were in pack A but not picked, and don't appear in pack B)
+        passed_cards = {s["card_name"] for s in tracker.passed_signals}
+        assert "Raging Goblin" in passed_cards
+        assert "Shock" in passed_cards
+        assert all(s["pick_number"] == 1 for s in tracker.passed_signals)
+        assert all(s["pack_number"] == 0 for s in tracker.passed_signals)
+
+    def test_pick_without_prior_snapshot_uses_initial_pack(self):
+        """Pick detected when _prev_pack_for_passed is empty and pick_in_pack > 1.
+
+        When the overlay starts mid-draft (no previous snapshot), the fallback
+        uses the scanner's initial_pack data to recover the pack contents.
+        With the current_pick guard on revert_returned, the signals are preserved.
+
+        Realistic scenario: user made 2 picks, scanner is showing pack for pick 3.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Scanner saw the packs for picks 1 and 2
+        pack_pick1 = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0))
+        sim.set_initial_pack(1, pack_pick1)
+        pack_pick2 = self._pack(
+            ("Lightning Bolt", 3.0), ("Goblin Piker", 6.0), ("Goblin Warchief", 4.0))
+        sim.set_initial_pack(2, pack_pick2)
+
+        # Simulate starting mid-draft: 2 picks already made, now showing pick 3's pack
+        taken = [
+            _make_card("Goblin Guide", 2.0),
+            _make_card("Lightning Bolt", 3.0),
+        ]
+        pack_pick3 = self._pack(("Mogg Fanatic", 7.0),)
+        sim.update(taken_cards=taken, pack_cards=pack_pick3, pick_in_pack=3, current_pack=1)
+
+        # fallback_pick = max(3 - 2, 1) = 1 → initial_pack for pick 1
+        # Subtracts both picked names from initial pack for pick 1:
+        #   pick1 pack = [Goblin Guide, Raging Goblin, Shock] minus [Goblin Guide, Lightning Bolt]
+        #   = [Raging Goblin, Shock] (Lightning Bolt wasn't in pick1's pack)
+        passed_cards = {s["card_name"] for s in tracker.passed_signals}
+        assert "Raging Goblin" in passed_cards
+        assert "Shock" in passed_cards
+
+    def test_multiple_picks_in_single_cycle(self):
+        """When 3 picks are batched into one cycle, the detection subtracts all
+        picked cards from the single saved snapshot.
+
+        This documents a known limitation: intermediate passed cards from picks
+        2 and 3 are lost because there were no snapshots between those picks.
+        Only cards that remain unpicked AND aren't in the current pack produce
+        lasting signals.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Cycle 1: show pack A with 5 cards
+        pack_a = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0),
+            ("Lightning Bolt", 3.0), ("Goblin Piker", 6.0),
+        )
+        sim.update(taken_cards=[], pack_cards=pack_a, pick_in_pack=1, current_pack=1)
+
+        # Cycle 2: user picked 3 cards very fast — all 3 appear at once.
+        # Current pack is a new physical pack (different cards).
+        taken = [
+            _make_card("Goblin Guide", 2.0),
+            _make_card("Raging Goblin", 5.0),
+            _make_card("Shock", 4.0),
+        ]
+        pack_d = self._pack(("Goblin Warchief", 4.0), ("Mogg Fanatic", 7.0))
+        sim.update(taken_cards=taken, pack_cards=pack_d, pick_in_pack=4, current_pack=1)
+
+        # From snapshot pack_a, subtract all 3 picked cards → Lightning Bolt + Goblin Piker
+        # Since pack_d has different cards, revert_returned doesn't remove them
+        passed_cards = {s["card_name"] for s in tracker.passed_signals}
+        assert "Lightning Bolt" in passed_cards
+        assert "Goblin Piker" in passed_cards
+        # They're recorded at the prev snapshot's pick/pack (pick=1, pack=0)
+        assert all(s["pick_number"] == 1 for s in tracker.passed_signals)
+        # Key limitation: intermediate passed cards (from picks 2 and 3) are lost
+        # because there was no snapshot between those picks
+
+    def test_first_pick_of_draft_with_initial_pack(self):
+        """Draft starts and first pick arrives in same cycle.
+
+        With the fix, the fallback uses initial_pack to recover what the pack
+        contained. The current_pick guard on revert_returned (current_pick=1)
+        prevents reverting signals at pick_number=1 since 1 is NOT < 1.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Scanner saw the full pack for pick 1
+        full_pack = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0))
+        sim.set_initial_pack(1, full_pack)
+
+        # First cycle: taken_cards already has 1 card, pick_in_pack=1
+        # (pack+pick arrived together, next pack hasn't arrived yet)
+        taken = [_make_card("Goblin Guide", 2.0)]
+        # pack_cards is still the pick-1 pack (since next pack hasn't arrived)
+        sim.update(taken_cards=taken, pack_cards=full_pack, pick_in_pack=1, current_pack=1)
+
+        # Fallback uses initial_pack[0], subtracts picked → Raging Goblin + Shock
+        # revert_returned with current_pick=1: only reverts pick_number < 1 → nothing
+        passed_cards = {s["card_name"] for s in tracker.passed_signals}
+        assert "Raging Goblin" in passed_cards
+        assert "Shock" in passed_cards
+        assert all(s["pick_number"] == 1 for s in tracker.passed_signals)
+
+    def test_first_pick_no_initial_pack_skipped(self):
+        """When no initial_pack data is available, passed detection is skipped."""
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # No set_initial_pack call — scanner hasn't seen any packs
+        taken = [_make_card("Goblin Guide", 2.0)]
+        remaining = self._pack(("Raging Goblin", 5.0), ("Shock", 4.0))
+        sim.update(taken_cards=taken, pack_cards=remaining, pick_in_pack=1, current_pack=1)
+
+        # No initial_pack available, nothing recorded
+        assert len(tracker.passed_signals) == 0
+
+    def test_fallback_uses_initial_pack_correctly(self):
+        """When fallback fires, it uses the scanner's initial_pack data.
+
+        The fallback records the initial pack's cards (minus picked) as passed.
+        With current_pick guard, revert_returned only reverts signals from
+        earlier picks, preserving the just-recorded signals.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Scanner saw the full pack for pick 1
+        original_pack = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0))
+        sim.set_initial_pack(1, original_pack)
+
+        # Simulate: overlay starts, pick already made, now showing pick 2's pack
+        taken = [_make_card("Goblin Guide", 2.0)]
+        pack_b = self._pack(("Goblin Warchief", 4.0), ("Mogg Fanatic", 7.0))
+        sim.update(taken_cards=taken, pack_cards=pack_b,
+                   pick_in_pack=2, current_pack=1)
+
+        # Fallback uses initial_pack for pick 1, subtracts picked → Raging Goblin + Shock
+        # Different pack shown (pack_b), so revert_returned doesn't match
+        passed_names = {s["card_name"] for s in tracker.passed_signals}
+        assert "Raging Goblin" in passed_names
+        assert "Shock" in passed_names
+        assert all(s["pick_number"] == 1 for s in tracker.passed_signals)
+
+    def test_wheeling_still_reverts_correctly(self):
+        """Cards that wheel back (appear in a later pick's pack) still get reverted.
+
+        The current_pick guard allows reverting signals from earlier picks when
+        the card reappears in a later pack.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # Pack A at pick 1
+        pack_a = self._pack(("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Shock", 4.0))
+        sim.update(taken_cards=[], pack_cards=pack_a, pick_in_pack=1, current_pack=1)
+
+        # Pick 1 made, pack B shown at pick 2
+        taken = [_make_card("Goblin Guide", 2.0)]
+        pack_b = self._pack(("Lightning Bolt", 3.0), ("Goblin Piker", 6.0))
+        sim.update(taken_cards=taken, pack_cards=pack_b, pick_in_pack=2, current_pack=1)
+
+        # Raging Goblin and Shock recorded as passed at pick=1
+        assert any(s["card_name"] == "Raging Goblin" for s in tracker.passed_signals)
+
+        # Pick 2 made, pack C shown at pick 9 — Raging Goblin wheeled back!
+        taken.append(_make_card("Lightning Bolt", 3.0))
+        pack_c = self._pack(("Raging Goblin", 5.0), ("Mogg Fanatic", 7.0))
+        sim.update(taken_cards=taken, pack_cards=pack_c, pick_in_pack=9, current_pack=1)
+
+        # Raging Goblin's passed signal (pick=1) should be reverted since 1 < 9
+        rg_signals = [s for s in tracker.passed_signals if s["card_name"] == "Raging Goblin"]
+        assert len(rg_signals) == 0
+        # Shock's signal should still be there (Shock didn't wheel)
+        assert any(s["card_name"] == "Shock" for s in tracker.passed_signals)
+
+    def test_normal_flow_across_pack_boundary(self):
+        """Picks across pack 1 into pack 2, each in separate cycles.
+
+        In Arena, each pick within a pack round shows a DIFFERENT physical pack.
+        Passed signals stick because the next pack's cards don't overlap.
+        """
+        tracker = OpennessTracker(self.DETECTION_CONFIG)
+        sim = PassedCardsSimulator(tracker)
+
+        # --- Pack round 1, Pick 1: show pack A ---
+        pack_a = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Goblin Piker", 6.0),
+        )
+        sim.update(taken_cards=[], pack_cards=pack_a, pick_in_pack=1, current_pack=1)
+        assert len(tracker.passed_signals) == 0
+
+        # --- Pick 1 made: user picks Goblin Guide, now sees pack B ---
+        taken = [_make_card("Goblin Guide", 2.0)]
+        pack_b = self._pack(("Shock", 4.0), ("Lightning Bolt", 3.0))
+        sim.update(taken_cards=taken, pack_cards=pack_b, pick_in_pack=2, current_pack=1)
+
+        # Passed from pack A: Raging Goblin and Goblin Piker at pick=1, pack=0
+        p1_passed = [s for s in tracker.passed_signals if s["pack_number"] == 0]
+        p1_names = {s["card_name"] for s in p1_passed}
+        assert "Raging Goblin" in p1_names
+        assert "Goblin Piker" in p1_names
+
+        # --- Pick 2 made: user picks Shock, now sees pack C ---
+        taken.append(_make_card("Shock", 4.0))
+        pack_c = self._pack(("Mogg Fanatic", 7.0), ("Goblin Warchief", 4.0))
+        sim.update(taken_cards=taken, pack_cards=pack_c, pick_in_pack=3, current_pack=1)
+
+        # Passed from pack B: Lightning Bolt at pick=2, pack=0
+        p1_pick2 = [s for s in tracker.passed_signals
+                    if s["pack_number"] == 0 and s["pick_number"] == 2]
+        assert any(s["card_name"] == "Lightning Bolt" for s in p1_pick2)
+
+        # --- Pack round 2, Pick 1: new pack round starts ---
+        pack_d = self._pack(
+            ("Goblin Guide", 2.0), ("Raging Goblin", 5.0), ("Lightning Bolt", 3.0),
+        )
+        sim.update(taken_cards=taken, pack_cards=pack_d, pick_in_pack=1, current_pack=2)
+
+        # No new passed signals (no new pick detected)
+        signals_before = len(tracker.passed_signals)
+
+        # --- Pack 2, Pick 1 made: user picks Goblin Guide, sees pack E ---
+        taken.append(_make_card("Goblin Guide", 2.0))
+        pack_e = self._pack(("Goblin Piker", 6.0), ("Mogg Fanatic", 7.0))
+        sim.update(taken_cards=taken, pack_cards=pack_e, pick_in_pack=2, current_pack=2)
+
+        # Passed from pack D: Raging Goblin and Lightning Bolt at pick=1, pack=1
+        p2_passed = [s for s in tracker.passed_signals if s["pack_number"] == 1]
+        p2_names = {s["card_name"] for s in p2_passed}
+        assert "Raging Goblin" in p2_names
+        assert "Lightning Bolt" in p2_names
+        assert all(s["pick_number"] == 1 for s in p2_passed)

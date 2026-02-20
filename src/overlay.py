@@ -1402,6 +1402,7 @@ class Overlay(ScaledWindow):
         self._prev_pack_number_for_passed = 0
         self._prev_taken_count = 0
         self._last_openness_key = (None, None)
+        logger.info("Openness tracker init: reset _prev_* state (taken_count=0, pack_for_passed=[])")
 
     def __replay_hindsight_openness(self):
         """Reset and replay openness signals from beginning through current hindsight position."""
@@ -1721,9 +1722,19 @@ class Overlay(ScaledWindow):
                 # Detect passed cards: when taken_cards grows, a pick was made
                 current_taken_count = len(taken_cards)
                 if current_taken_count > self._prev_taken_count:
+                    num_new_picks = current_taken_count - self._prev_taken_count
                     new_picks = taken_cards[self._prev_taken_count:]
                     picked_names = [c.get(constants.DATA_FIELD_NAME, "") for c in new_picks]
+                    logger.info("Passed detection: pick detected, taken %d->%d (+%d), "
+                                "picked=%s, pick_in_pack=%d, pack=%d",
+                                self._prev_taken_count, current_taken_count, num_new_picks,
+                                picked_names, pick_in_pack, current_pack)
                     if self._prev_pack_for_passed:
+                        logger.info("Passed detection: using prev snapshot (%d cards, "
+                                    "prev_pick=%d, prev_pack=%d)",
+                                    len(self._prev_pack_for_passed),
+                                    self._prev_pick_for_passed,
+                                    self._prev_pack_number_for_passed)
                         passed = list(self._prev_pack_for_passed)
                         for name in picked_names:
                             for j, c in enumerate(passed):
@@ -1731,18 +1742,39 @@ class Overlay(ScaledWindow):
                                     passed.pop(j)
                                     break
                         if passed:
+                            logger.info("Passed detection: recording %d passed cards at "
+                                        "pick=%d, pack=%d",
+                                        len(passed), self._prev_pick_for_passed,
+                                        self._prev_pack_number_for_passed)
                             self.openness_tracker.record_passed(
                                 passed, self._prev_pick_for_passed,
                                 self._prev_pack_number_for_passed)
-                    elif pack_cards and pick_in_pack > 1:
-                        # First observed pick can arrive without a previous snapshot.
-                        # In that case, current pack cards are exactly the cards passed.
-                        self.openness_tracker.record_passed(
-                            list(pack_cards), pick_in_pack - 1, current_pack - 1)
+                    else:
+                        # No previous snapshot — use scanner's initial_pack to
+                        # recover what the pack contained before the pick.
+                        fallback_pick = max(pick_in_pack - num_new_picks, 1)
+                        initial = self.draft.retrieve_initial_pack_cards_for_pick(fallback_pick)
+                        if initial:
+                            logger.info("Passed detection: FALLBACK using initial_pack "
+                                        "(%d cards) for pick=%d, pack=%d",
+                                        len(initial), fallback_pick, current_pack - 1)
+                            passed = list(initial)
+                            for name in picked_names:
+                                for j, c in enumerate(passed):
+                                    if c.get(constants.DATA_FIELD_NAME, "") == name:
+                                        passed.pop(j)
+                                        break
+                            if passed:
+                                self.openness_tracker.record_passed(
+                                    passed, fallback_pick, current_pack - 1)
+                        else:
+                            logger.info("Passed detection: no prev snapshot and no "
+                                        "initial_pack for pick=%d — skipped", fallback_pick)
 
                 # Revert passed signals for cards that wheeled back
                 pack_card_names = [c.get(constants.DATA_FIELD_NAME, "") for c in pack_cards]
-                self.openness_tracker.revert_returned(pack_card_names, current_pack - 1)
+                self.openness_tracker.revert_returned(
+                    pack_card_names, current_pack - 1, current_pick=pick_in_pack)
 
                 self._prev_pack_for_passed = list(pack_cards)
                 self._prev_pick_for_passed = pick_in_pack

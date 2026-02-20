@@ -351,6 +351,16 @@ class MtgoScanner:
         '''Return the cards from the current pack'''
         return self.set_data.get_data_by_name(self.pack_cards)
 
+    def retrieve_initial_pack_cards_for_pick(self, pick_number):
+        '''Return the initial pack contents for the given pick number.
+
+        MTGO tracks a single initial_pack_cards for the current pack.
+        Returns it regardless of pick_number since MTGO shows one pack at a time.
+        '''
+        if self.initial_pack_cards:
+            return self.set_data.get_data_by_name(self.initial_pack_cards)
+        return []
+
     def retrieve_taken_cards(self):
         '''Return the card data for all of the cards that were picked during the draft'''
         return self.set_data.get_data_by_name(self.taken_cards)

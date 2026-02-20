@@ -1140,6 +1140,24 @@ class ArenaScanner:
 
         return pack_cards
 
+    def retrieve_initial_pack_cards_for_pick(self, pick_number):
+        '''Return the initial pack contents for the given pick number.
+
+        The scanner stores the full pack as first seen in initial_pack[pack_index].
+        This data persists after picks are made, allowing lookup of what the pack
+        contained before any cards were picked from it.
+
+        Args:
+            pick_number: 1-based pick position within the pack
+
+        Returns:
+            list of card dicts, or empty list if not available
+        '''
+        pack_index = max(pick_number - 1, 0) % self.number_of_players
+        if pack_index < len(self.initial_pack) and self.initial_pack[pack_index]:
+            return self.set_data.get_data_by_id(self.initial_pack[pack_index])
+        return []
+
     def retrieve_taken_cards(self):
         '''Return the card data for all of the cards that were picked during the draft'''
         taken_cards = self.set_data.get_data_by_id(self.taken_cards)

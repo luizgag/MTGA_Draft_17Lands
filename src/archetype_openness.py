@@ -284,7 +284,7 @@ class OpennessTracker:
 
                     signal = raw_signal * card_weight * pack_weight * 100
                 else:  # simple
-                    raw_signal = pick_number / ata ** 2
+                    raw_signal = pick_number / (ata ** 2)
                     signal = raw_signal * card_weight * pack_weight * 100
 
                 signal_count += 1
@@ -643,6 +643,9 @@ class OpennessTracker:
             pack_number: 0-indexed pack number
         """
 
+        logger.debug("record_passed: %d cards, pick_number=%d, pack_number=%d",
+                     len(passed_cards), pick_number, pack_number)
+
         pack_weight = self.passed_pack_weights[pack_number] if pack_number < len(self.passed_pack_weights) else 1.0
 
         for card in passed_cards:
@@ -659,9 +662,13 @@ class OpennessTracker:
                     continue
 
                 card_weight = archetype.cards[card_name]
-                raw_signal = -(pick_number / ata ** 2)
+                raw_signal = -((pick_number + 1)/ (ata ** 2))
                 signal = raw_signal * card_weight * pack_weight * 100
 
+                logger.debug("record_passed signal: card=%s, archetype=%s, signal=%.4f "
+                             "(pick=%d, ata=%.2f, weight=%.2f, pack_weight=%.2f)",
+                             card_name, archetype.name, signal,
+                             pick_number, ata, card_weight, pack_weight)
                 self.passed_signals.append({
                     "archetype": archetype.name,
                     "card_name": card_name,
@@ -671,7 +678,8 @@ class OpennessTracker:
                     "signal": signal,
                 })
 
-    def revert_returned(self, returned_card_names: List[str], pack_number: int) -> None:
+    def revert_returned(self, returned_card_names: List[str], pack_number: int,
+                        current_pick: Optional[int] = None) -> None:
         """Remove passed signals for cards that wheeled back (returned in a later pack).
 
         For each returned card name, finds signals matching card_name + pack_number,
@@ -679,15 +687,22 @@ class OpennessTracker:
         This handles multi-archetype cards (same card_name + pack_number + pick_number
         across different archetypes).
 
+        When current_pick is provided, only signals with pick_number < current_pick
+        are eligible for revert. This prevents reverting signals that were just recorded
+        in the current cycle (e.g., when the pack hasn't advanced yet after a pick).
+
         Idempotent: calling twice for the same card has no additional effect.
 
         Args:
             returned_card_names: list of card names that appeared again in a pack
             pack_number: the pack_number whose passed signals should be checked
+            current_pick: if provided, only revert signals with pick_number < this value
         """
         for name in returned_card_names:
             matches = [s for s in self.passed_signals
                        if s["card_name"] == name and s["pack_number"] == pack_number]
+            if current_pick is not None:
+                matches = [s for s in matches if s["pick_number"] < current_pick]
             if not matches:
                 continue
             earliest_pick = min(s["pick_number"] for s in matches)
