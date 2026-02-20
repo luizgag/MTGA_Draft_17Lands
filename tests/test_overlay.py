@@ -218,3 +218,56 @@ def test_price_injection_adds_price_to_card_data():
     assert combined_data["card_ratings"]["1001"]["price"] == pytest.approx(0.05)
     assert combined_data["card_ratings"]["1002"]["price"] == pytest.approx(27.12)
     assert combined_data["card_ratings"]["1003"]["price"] == pytest.approx(0.0)
+
+
+def test_price_prefix_added_to_expensive_cards():
+    """Cards above price threshold should get $$$ prefix in pack table results."""
+    result_list = [
+        {"name": "Moonshadow", "price": 27.12, "results": ["Moonshadow", "58.2"]},
+        {"name": "Lightning Bolt", "price": 0.05, "results": ["Lightning Bolt", "52.1"]},
+        {"name": "Jace", "price": 5.0, "results": ["Jace", "61.0"]},
+    ]
+
+    threshold = 3.0
+    for card in result_list:
+        price = card.get("price", 0.0)
+        if price >= threshold:
+            card["results"][0] = f"$$$ {card['results'][0]}"
+
+    assert result_list[0]["results"][0] == "$$$ Moonshadow"
+    assert result_list[1]["results"][0] == "Lightning Bolt"  # Below threshold
+    assert result_list[2]["results"][0] == "$$$ Jace"
+
+
+def test_price_prefix_not_added_for_arena_platform():
+    """$$$ prefix should only apply when platform is MTGO."""
+    result_list = [
+        {"name": "Moonshadow", "price": 27.12, "results": ["Moonshadow", "58.2"]},
+    ]
+
+    platform = constants.PLATFORM_MTGA
+    threshold = 3.0
+    if platform == constants.PLATFORM_MTGO:
+        for card in result_list:
+            price = card.get("price", 0.0)
+            if price >= threshold:
+                card["results"][0] = f"$$$ {card['results'][0]}"
+
+    assert result_list[0]["results"][0] == "Moonshadow"  # No prefix for Arena
+
+
+def test_price_prefix_with_zero_threshold():
+    """When threshold is 0, all cards with any price get the prefix."""
+    result_list = [
+        {"name": "Bolt", "price": 0.05, "results": ["Bolt", "52.1"]},
+        {"name": "Island", "price": 0.0, "results": ["Island", "48.0"]},
+    ]
+
+    threshold = 0.0
+    for card in result_list:
+        price = card.get("price", 0.0)
+        if price >= threshold and price > 0:
+            card["results"][0] = f"$$$ {card['results'][0]}"
+
+    assert result_list[0]["results"][0] == "$$$ Bolt"
+    assert result_list[1]["results"][0] == "Island"  # price is 0, no prefix

@@ -807,6 +807,14 @@ class Overlay(ScaledWindow):
                         card["results"][0] = f"→ {card['results'][0]}"
                         break
 
+            # Add $$$ prefix for expensive MTGO cards
+            if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+                threshold = self.configuration.settings.price_threshold
+                for card in result_list:
+                    price = card.get(constants.DATA_FIELD_PRICE, 0.0)
+                    if price >= threshold and price > 0:
+                        card["results"][0] = f"$$$ {card['results'][0]}"
+
             for count, card in enumerate(result_list):
                 row_tag = self._identify_card_row_tag(
                     self.configuration.settings,
