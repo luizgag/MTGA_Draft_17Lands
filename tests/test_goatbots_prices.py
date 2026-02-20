@@ -108,3 +108,25 @@ def test_retrieve_goatbots_prices_no_matching_set(mock_goatbots_data):
         prices = retrieve_goatbots_prices("NONEXISTENT")
 
     assert prices == {}
+
+
+def test_price_data_survives_json_roundtrip(tmp_path):
+    """Price field should persist through JSON save/load cycle (like export_card_data)."""
+    card_data = {
+        "meta": {},
+        "color_ratings": {},
+        "card_ratings": {
+            "1001": {"name": "Moonshadow", "price": 27.12, "deck_colors": {}},
+            "1002": {"name": "Lightning Bolt", "price": 0.05, "deck_colors": {}},
+        }
+    }
+
+    filepath = tmp_path / "ECL_Data.json"
+    with open(filepath, "w") as f:
+        json.dump(card_data, f)
+
+    with open(filepath, "r") as f:
+        loaded = json.load(f)
+
+    assert loaded["card_ratings"]["1001"]["price"] == pytest.approx(27.12)
+    assert loaded["card_ratings"]["1002"]["price"] == pytest.approx(0.05)
