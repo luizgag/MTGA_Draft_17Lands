@@ -316,6 +316,8 @@ class Overlay(ScaledWindow):
         self.platform_selection = tkinter.StringVar(self.root)
         self.mtgo_log_folder_value = tkinter.StringVar(self.root)
         self.mtgo_hindsight_checkbox_value = tkinter.IntVar(self.root)
+        self.price_enabled_checkbox_value = tkinter.IntVar(self.root)
+        self.price_threshold_value = tkinter.DoubleVar(self.root)
         self.mtgo_file_selection = tkinter.StringVar(self.root)
         self.mtgo_file_map = {}
 
@@ -1547,6 +1549,10 @@ class Overlay(ScaledWindow):
             self.configuration.settings.mtgo_log_folder = self.mtgo_log_folder_value.get()
             self.configuration.settings.mtgo_hindsight_enabled = bool(
                 self.mtgo_hindsight_checkbox_value.get())
+            self.configuration.settings.price_enabled = bool(
+                self.price_enabled_checkbox_value.get())
+            self.configuration.settings.price_threshold = float(
+                self.price_threshold_value.get())
 
             if not self.configuration.settings.mtgo_hindsight_enabled and self.draft.hindsight_mode:
                 self.draft.hindsight_mode = False
@@ -1648,6 +1654,10 @@ class Overlay(ScaledWindow):
                 self.configuration.settings.mtgo_log_folder)
             self.mtgo_hindsight_checkbox_value.set(
                 self.configuration.settings.mtgo_hindsight_enabled)
+            self.price_enabled_checkbox_value.set(
+                self.configuration.settings.price_enabled)
+            self.price_threshold_value.set(
+                self.configuration.settings.price_threshold)
         except Exception as error:
             logger.error(error)
         self.__control_trace(True)
@@ -3136,6 +3146,33 @@ class Overlay(ScaledWindow):
                 padx=row_padding_x, pady=row_padding_y)
             row_count += 1
 
+            price_enabled_label = Label(
+                popup, text="Enable MTGO Prices:", style="MainSectionsBold.TLabel", anchor="e")
+            price_enabled_checkbox = Checkbutton(popup,
+                                                 variable=self.price_enabled_checkbox_value,
+                                                 onvalue=1,
+                                                 offvalue=0)
+
+            price_enabled_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            price_enabled_checkbox.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
+            price_threshold_label = Label(popup, text="Price Threshold (tix):",
+                                          style="MainSectionsBold.TLabel", anchor="e")
+            price_threshold_entry = Entry(popup, textvariable=self.price_threshold_value)
+
+            price_threshold_label.grid(
+                row=row_count, column=0, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            price_threshold_entry.grid(
+                row=row_count, column=1, columnspan=1, sticky="nsew",
+                padx=row_padding_x, pady=row_padding_y)
+            row_count += 1
+
             best_in_column_threshold_label.grid(
                 row=row_count, column=0, columnspan=1, sticky="nsew",
                 padx=row_padding_x, pady=row_padding_y)
@@ -3706,6 +3743,10 @@ class Overlay(ScaledWindow):
                 (self.mtgo_log_folder_value, lambda: self.mtgo_log_folder_value.trace(
                     "w", self.__update_settings_callback)),
                 (self.mtgo_hindsight_checkbox_value, lambda: self.mtgo_hindsight_checkbox_value.trace(
+                    "w", self.__update_settings_callback)),
+                (self.price_enabled_checkbox_value, lambda: self.price_enabled_checkbox_value.trace(
+                    "w", self.__update_settings_callback)),
+                (self.price_threshold_value, lambda: self.price_threshold_value.trace(
                     "w", self.__update_settings_callback)),
             ]
 
