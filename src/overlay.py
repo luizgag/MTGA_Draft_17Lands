@@ -1150,7 +1150,13 @@ class Overlay(ScaledWindow):
     def __update_pack_pick_label(self, pack, pick):
         '''Update the label that lists the pack and pick numbers'''
         try:
-            new_label = f"Pack {pack} / Pick {pick}"
+            display_pick = pick
+            if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+                mtgo_pick_in_pack = self.draft.retrieve_current_pick_in_pack()
+                if mtgo_pick_in_pack > 0:
+                    display_pick = mtgo_pick_in_pack
+
+            new_label = f"Pack {pack} / Pick {display_pick}"
             self.pack_pick_label.config(text=new_label)
 
         except Exception as error:

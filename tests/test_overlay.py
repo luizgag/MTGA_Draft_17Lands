@@ -85,6 +85,35 @@ def test_overlay_init_does_not_check_for_updates(mock_scanner):
         mock_check_version.assert_not_called()
 
 
+def test_update_pack_pick_label_uses_mtgo_pick_in_pack():
+    """MTGO label should show per-pack pick, not total pick."""
+    overlay = Overlay.__new__(Overlay)
+    overlay.configuration = SimpleNamespace(
+        settings=SimpleNamespace(platform=constants.PLATFORM_MTGO)
+    )
+    overlay.draft = MagicMock()
+    overlay.draft.retrieve_current_pick_in_pack.return_value = 1
+    overlay.pack_pick_label = MagicMock()
+
+    overlay._Overlay__update_pack_pick_label(2, 16)
+
+    overlay.pack_pick_label.config.assert_called_once_with(text="Pack 2 / Pick 1")
+
+
+def test_update_pack_pick_label_keeps_non_mtgo_pick():
+    """Non-MTGO label should continue using provided pick value."""
+    overlay = Overlay.__new__(Overlay)
+    overlay.configuration = SimpleNamespace(
+        settings=SimpleNamespace(platform=constants.PLATFORM_MTGA)
+    )
+    overlay.draft = MagicMock()
+    overlay.pack_pick_label = MagicMock()
+
+    overlay._Overlay__update_pack_pick_label(2, 16)
+
+    overlay.pack_pick_label.config.assert_called_once_with(text="Pack 2 / Pick 16")
+
+
 #TODO: create a test for CreateCardToolTip
 
 
