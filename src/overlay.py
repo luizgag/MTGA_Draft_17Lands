@@ -2259,9 +2259,9 @@ class Overlay(ScaledWindow):
                 code = _get_current_set_code()
                 sources = self.configuration.settings.set_sources.get(code, [])
                 for src in sources:
-                    label = f"{src.format} | {src.user_group} | w={src.weight}"
+                    label = f"{src.format} | {src.user_group} | enabled={src.enabled}"
                     sources_listbox.insert(tkinter.END, label)
-                active = [s for s in sources if s.weight > 0]
+                active = [s for s in sources if s.enabled]
                 add_button['state'] = 'normal' if active else 'disabled'
 
             def _add_source():
@@ -3325,7 +3325,7 @@ class Overlay(ScaledWindow):
 
                 set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
                 per_set_sources = self.configuration.settings.set_sources.get(set_code, [])
-                active_sources = [s for s in per_set_sources if s.weight > 0]
+                active_sources = [s for s in per_set_sources if s.enabled]
 
                 if not active_sources:
                     result = False
@@ -3521,22 +3521,17 @@ class Overlay(ScaledWindow):
         group_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
 
         row += 1
-        tkinter.Label(dialog, text="Weight:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
-        weight_entry = tkinter.Entry(dialog)
-        weight_entry.insert(0, str(source.weight))
-        weight_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+        enabled_var = tkinter.BooleanVar(value=source.enabled)
+        tkinter.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=2)
 
         row += 1
 
         def _save():
-            try:
-                weight = float(weight_entry.get())
-            except ValueError:
-                weight = 1.0
             new_source = DatasetSource(
                 format=format_var.get(),
                 user_group=group_var.get(),
-                weight=weight,
+                enabled=enabled_var.get(),
             )
             current_sources = self.configuration.settings.set_sources.get(set_code, [])
             if editing:
