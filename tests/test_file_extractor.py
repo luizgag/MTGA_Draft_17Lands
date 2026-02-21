@@ -574,6 +574,37 @@ class TestMergeDatasets:
 
         assert result["meta"]["game_count"] == 59529 + 12000 + 8500 + 3200
 
+    def test_merge_iwd_rederived_as_gihwr_minus_gnswr(self):
+        """iwd is re-derived as merged_gihwr - merged_gnswr, not averaged directly.
+
+        17Lands definition: IWD (Improvement When Drawn) = GIHWR - GNSWR.
+        Because both components are already game-count weighted, the merged iwd
+        naturally reflects game-count weighting.
+        """
+        # Source A: gihwr=55.0, gnswr=50.0 → iwd=5.0 (gih=1000, ngnd=500)
+        # Source B: gihwr=65.0, gnswr=55.0 → iwd=10.0 (gih=200, ngnd=100)
+        stats_a = _stats(gihwr=55.0, gnswr=50.0, iwd=5.0, ngp=1500, gih=1000, ngnd=500)
+        stats_b = _stats(gihwr=65.0, gnswr=55.0, iwd=10.0, ngp=300, gih=200, ngnd=100)
+        ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
+        ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
+
+        result = merge_datasets([ds_a, ds_b])
+        ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
+
+        # merged_gihwr: (55*1000 + 65*200) / 1200 = 56.7
+        expected_gihwr = round((55.0 * 1000 + 65.0 * 200) / 1200, 1)
+        # merged_gnswr: (50*500 + 55*100) / 600 = 50.8
+        expected_gnswr = round((50.0 * 500 + 55.0 * 100) / 600, 1)
+        # merged_iwd = 56.7 - 50.8 = 5.9 (NOT a simple average of 5.0 and 10.0)
+        expected_iwd = round(expected_gihwr - expected_gnswr, 1)
+
+        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(expected_gihwr, abs=0.1)
+        assert ad[constants.DATA_FIELD_GNSWR] == pytest.approx(expected_gnswr, abs=0.1)
+        assert ad[constants.DATA_FIELD_IWD] == pytest.approx(expected_iwd, abs=0.1)
+        # Sanity check: iwd != simple average of 5.0 and 10.0
+        assert ad[constants.DATA_FIELD_IWD] != pytest.approx(7.5, abs=0.5)
+
+
 
 @patch("src.file_extractor.os.remove")
 @patch("src.file_extractor.os.listdir")
