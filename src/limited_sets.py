@@ -125,16 +125,18 @@ class LimitedSets:
         while retries:
             try:
                 url = "https://api.scryfall.com/sets"
+                request = urllib.request.Request(url, headers=constants.SCRYFALL_REQUEST_HEADERS)
                 url_data = urllib.request.urlopen(
-                    url, context=self.context).read()
+                    request, context=self.context).read()
                 set_json_data = json.loads(url_data)
 
                 self.__process_scryfall_sets(set_json_data["data"])
 
                 while set_json_data["has_more"]:
                     url = set_json_data["next_page"]
+                    request = urllib.request.Request(url, headers=constants.SCRYFALL_REQUEST_HEADERS)
                     url_data = urllib.request.urlopen(
-                        url, context=self.context).read()
+                        request, context=self.context).read()
                     set_json_data = json.loads(url_data)
                     self.__process_scryfall_sets(set_json_data["data"])
 

@@ -129,8 +129,14 @@ def test_retrieve_17lands_data_url_encoding(mock_urlopen, file_extractor, set_co
     )
 
     # Assert
-    # Check that urlopen was called with the correctly formatted and encoded URL.
-    mock_urlopen.assert_called_once_with(expected_url, context=file_extractor.context)
+    # Check that urlopen was called with a Request object with the correctly encoded URL.
+    mock_urlopen.assert_called_once()
+    call_args = mock_urlopen.call_args
+    request_obj = call_args[0][0]
+    import urllib.request as _urllib_request
+    assert isinstance(request_obj, _urllib_request.Request)
+    assert request_obj.full_url == expected_url
+    assert call_args[1]['context'] == file_extractor.context
 
 def test_process_17lands_data(file_extractor):
     """

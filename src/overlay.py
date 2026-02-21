@@ -3419,6 +3419,9 @@ class Overlay(ScaledWindow):
                     all_weights = [active_sources[0].weight]
 
                     for idx, source in enumerate(active_sources[1:], start=2):
+                        status.set(f"Downloading Source {idx}/{len(active_sources)} - Waiting...")
+                        popup.update()
+                        time.sleep(constants.CARD_RATINGS_INTER_SOURCE_DELAY_SECONDS)
                         status.set(f"Downloading Source {idx}/{len(active_sources)}")
                         popup.update()
 

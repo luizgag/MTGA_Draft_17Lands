@@ -877,8 +877,9 @@ class FileExtractor:
                     root.update()
                     url = "https://api.scryfall.com/cards/search?order=set&unique=prints&q=e" + \
                         quote(':', safe='') + f"{card_set}"
+                    request = urllib.request.Request(url, headers=constants.SCRYFALL_REQUEST_HEADERS)
                     url_data = urllib.request.urlopen(
-                        url, context=self.context).read()
+                        request, context=self.context).read()
 
                     set_json_data = json.loads(url_data)
 
@@ -887,8 +888,9 @@ class FileExtractor:
 
                     while set_json_data["has_more"]:
                         url = set_json_data["next_page"]
+                        request = urllib.request.Request(url, headers=constants.SCRYFALL_REQUEST_HEADERS)
                         url_data = urllib.request.urlopen(
-                            url, context=self.context).read()
+                            request, context=self.context).read()
                         set_json_data = json.loads(url_data)
                         result, result_string = self._process_scryfall_data(
                             set_json_data["data"])
@@ -941,8 +943,10 @@ class FileExtractor:
                         url = f"https://www.17lands.com/card_ratings/data?expansion={safe_set_code}&format={self.draft}&start_date={self.start_date}&end_date={self.end_date}{user_group}"
                         if color != constants.FILTER_OPTION_ALL_DECKS:
                             url += "&colors=" + color
+                        request = urllib.request.Request(
+                            url, headers=constants.SEVENTEENLANDS_REQUEST_HEADERS)
                         url_data = urllib.request.urlopen(
-                            url, context=self.context).read()
+                            request, context=self.context).read()
 
                         set_json_data = json.loads(url_data)
                         self._process_17lands_data(color, set_json_data)
@@ -992,7 +996,9 @@ class FileExtractor:
                 user_group = "&user_group=" + self.user_group.lower()
             safe_set_code = quote(self.selected_sets.seventeenlands[0], safe='')
             url = f"https://www.17lands.com/color_ratings/data?expansion={safe_set_code}&event_type={self.draft}&start_date={self.start_date}&end_date={self.end_date}{user_group}&combine_splash=true"
-            url_data = urllib.request.urlopen(url, context=self.context).read()
+            request = urllib.request.Request(
+                url, headers=constants.SEVENTEENLANDS_REQUEST_HEADERS)
+            url_data = urllib.request.urlopen(request, context=self.context).read()
 
             color_json_data = json.loads(url_data)
             game_count = self._process_17lands_color_ratings(color_json_data)
