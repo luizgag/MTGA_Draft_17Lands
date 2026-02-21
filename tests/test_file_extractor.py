@@ -344,7 +344,7 @@ class TestMergeDatasets:
             )
         }
         ds = _make_dataset(card_ratings, color_ratings={"UB": 52.0, "BR": 51.0})
-        result = merge_datasets([ds], [1.0])
+        result = merge_datasets([ds])
 
         assert result["card_ratings"]["100"][constants.DATA_FIELD_NAME] == "Murder"
         ad = result["card_ratings"]["100"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
@@ -360,7 +360,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("CardA", ["W"], ["Creature"], "common", 2, "{1}{W}", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("CardA", ["W"], ["Creature"], "common", 2, "{1}{W}", [], _make_deck_colors(stats_b))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(55.0)
@@ -375,7 +375,7 @@ class TestMergeDatasets:
         ds_premier = _make_dataset({"1": _make_card("CardA", ["R"], ["Creature"], "rare", 3, "{2}{R}", [], _make_deck_colors(stats_premier))})
         ds_trad = _make_dataset({"1": _make_card("CardA", ["R"], ["Creature"], "rare", 3, "{2}{R}", [], _make_deck_colors(stats_trad))})
 
-        result = merge_datasets([ds_premier, ds_trad], [0.7, 0.3])
+        result = merge_datasets([ds_premier, ds_trad])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         expected_gihwr = round((55.0 * 0.7 + 58.0 * 0.3) / (0.7 + 0.3), 1)
@@ -392,7 +392,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("OnlyInA", ["G"], ["Creature"], "uncommon", 4, "{3}{G}", ["http://img/a.jpg"], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({})  # Card not present
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         assert "1" in result["card_ratings"]
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
         assert ad[constants.DATA_FIELD_GIHWR] == 60.0
@@ -405,7 +405,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         assert ad[constants.DATA_FIELD_NGP] == 300
@@ -423,7 +423,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
 
-        result = merge_datasets([ds_a, ds_b], [0.6, 0.4])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         for field, va, vb in [
@@ -445,7 +445,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("NameA", ["W"], ["Creature"], "rare", 3, "{2}{W}", ["http://img/a.jpg"], _make_deck_colors(stats))})
         ds_b = _make_dataset({"1": _make_card("NameB", ["B"], ["Instant"], "common", 2, "{1}{B}", ["http://img/b.jpg"], _make_deck_colors(stats))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         card = result["card_ratings"]["1"]
         assert card[constants.DATA_FIELD_NAME] == "NameA"
         assert card[constants.DATA_FIELD_COLORS] == ["W"]
@@ -458,7 +458,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({}, color_ratings={"WU": 55.0, "BR": 50.0}, game_count=8000)
         ds_b = _make_dataset({}, color_ratings={"WU": 60.0, "BR": 52.0}, game_count=4000)
 
-        result = merge_datasets([ds_a, ds_b], [0.7, 0.3])
+        result = merge_datasets([ds_a, ds_b])
         expected_wu = round((55.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3), 1)
         expected_br = round((50.0 * 0.7 + 52.0 * 0.3) / (0.7 + 0.3), 1)
         assert result["color_ratings"]["WU"] == pytest.approx(expected_wu)
@@ -478,7 +478,7 @@ class TestMergeDatasets:
         ds_b = _make_dataset({"1": _make_card("Wayfinder", ["U"], ["Creature"], "common", 2, "{1}{U}", [],
                                               _make_deck_colors(stats_trad))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         # Source B has no data (all counts are 0), so rates should come entirely from source A
@@ -496,7 +496,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         # GIHWR: both have gih>0, so average normally
@@ -513,7 +513,7 @@ class TestMergeDatasets:
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))},
                              color_ratings={"WU": 99.0})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 0.0])
+        result = merge_datasets([ds_a])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
         assert ad[constants.DATA_FIELD_GIHWR] == 55.0
         # Count fields from zero-weight source should not be included
@@ -530,7 +530,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_premier))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_trad))})
 
-        result = merge_datasets([ds_a, ds_b], [1.0, 1.0])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         # All win rate fields should come entirely from source A (source B has 0.0 = suppressed)
@@ -550,7 +550,7 @@ class TestMergeDatasets:
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
 
-        result = merge_datasets([ds_a, ds_b], [0.7, 0.3])
+        result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
         # Both sources contribute: (50.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3) = 53.0

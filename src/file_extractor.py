@@ -41,42 +41,42 @@ def delete_old_set_files(set_code: str):
                 logger.error("Failed to delete %s: %s", filename, error)
 
 
-def merge_datasets(datasets: List[dict], weights: List[float]) -> dict:
-    """Merge multiple 17Lands dataset JSON dicts into one using weighted averages.
+def merge_datasets(datasets: List[dict]) -> dict:
+    """Merge multiple 17Lands dataset JSON dicts into one using game-count weighted averages.
 
     For each card (by Arena ID), for each numeric field in deck_colors:
       - Count fields (ngp, ngoh, gih, ngnd, ngd): summed across all sources
-      - Rate/average fields: weighted average across sources that have the card
+      - Rate/average fields: weighted by actual game count for that field
+      - iwd: re-derived as merged_gihwr - merged_gnswr
 
-    Non-numeric fields (name, types, colors, image, etc.) come from the first
-    dataset that has the card. color_ratings section gets the same weighted-average.
+    color_ratings are weighted by each source's meta.game_count.
+    meta.game_count in the result is the sum across all sources.
 
-    Sources with weight <= 0 are excluded entirely.
+    All passed datasets are merged. Callers are responsible for filtering
+    disabled sources before calling this function.
     """
     if len(datasets) == 1:
         return copy.deepcopy(datasets[0])
 
-    # Filter out zero-weight sources
-    active = [(ds, w) for ds, w in zip(datasets, weights) if w > 0]
-    if not active:
-        return copy.deepcopy(datasets[0])
-
-    # Start with meta from first active source
-    result = {"meta": copy.deepcopy(active[0][0].get("meta", {}))}
+    # Start with meta from first source, then aggregate game_count
+    result = {"meta": copy.deepcopy(datasets[0].get("meta", {}))}
+    result["meta"]["game_count"] = sum(
+        ds.get("meta", {}).get("game_count", 0) for ds in datasets
+    )
 
     # Merge color_ratings
-    result["color_ratings"] = _merge_color_ratings(active)
+    result["color_ratings"] = _merge_color_ratings(datasets)
 
     # Merge card_ratings
-    result["card_ratings"] = _merge_card_ratings(active)
+    result["card_ratings"] = _merge_card_ratings(datasets)
 
     return result
 
 
-def _merge_color_ratings(active):
-    """Weighted-average the color_ratings section across active sources."""
+def _merge_color_ratings(datasets):
+    """Weighted-average the color_ratings section across datasets."""
     all_colors = set()
-    for ds, _ in active:
+    for ds in datasets:
         if "color_ratings" in ds:
             all_colors.update(ds["color_ratings"].keys())
 
@@ -84,45 +84,41 @@ def _merge_color_ratings(active):
     for color in all_colors:
         total_weighted = 0.0
         total_weight = 0.0
-        for ds, w in active:
+        for ds in datasets:
             cr = ds.get("color_ratings", {})
             if color in cr:
-                total_weighted += cr[color] * w
-                total_weight += w
+                total_weighted += cr[color] * 1.0  # TODO: use game_count weight in Task 4
+                total_weight += 1.0
         if total_weight > 0:
             merged[color] = round(total_weighted / total_weight, 1)
 
     return merged
 
 
-def _merge_card_ratings(active):
-    """Merge card_ratings across active (dataset, weight) pairs."""
-    # Collect all card IDs
+def _merge_card_ratings(datasets):
+    """Merge card_ratings across all datasets."""
     all_card_ids = set()
-    for ds, _ in active:
+    for ds in datasets:
         all_card_ids.update(ds.get("card_ratings", {}).keys())
 
     merged_cards = {}
     for card_id in all_card_ids:
-        # Gather (card_data, weight) pairs for sources that have this card
         sources = []
-        for ds, w in active:
+        for ds in datasets:
             card_ratings = ds.get("card_ratings", {})
             if card_id in card_ratings:
-                sources.append((card_ratings[card_id], w))
+                sources.append(card_ratings[card_id])
 
         if not sources:
             continue
 
-        # Non-numeric fields: copy from first source
-        first_card = sources[0][0]
+        first_card = sources[0]
         merged_card = {}
         for key, value in first_card.items():
             if key == constants.DATA_FIELD_DECK_COLORS:
                 continue
             merged_card[key] = copy.deepcopy(value)
 
-        # Merge deck_colors
         merged_card[constants.DATA_FIELD_DECK_COLORS] = _merge_deck_colors(sources)
         merged_cards[card_id] = merged_card
 
@@ -130,56 +126,51 @@ def _merge_card_ratings(active):
 
 
 def _merge_deck_colors(sources):
-    """Merge the deck_colors section for a single card across sources."""
-    # Collect all color keys
+    """Merge the deck_colors section for a single card.
+
+    sources: List[card_data dict] — no weights, all are included.
+    Rate fields temporarily use equal weighting (game-count weighting added in Task 5).
+    """
     all_colors = set()
-    for card_data, _ in sources:
+    for card_data in sources:
         if constants.DATA_FIELD_DECK_COLORS in card_data:
             all_colors.update(card_data[constants.DATA_FIELD_DECK_COLORS].keys())
 
     merged = {}
     for color in all_colors:
-        # Gather stats for this color from each source
         color_sources = []
-        for card_data, w in sources:
+        for card_data in sources:
             dc = card_data.get(constants.DATA_FIELD_DECK_COLORS, {})
             if color in dc:
-                color_sources.append((dc[color], w))
+                color_sources.append(dc[color])
 
         if not color_sources:
             continue
 
-        merged_stats = {}
-        # Get all field names from the first source
         all_fields = set()
-        for stats, _ in color_sources:
+        for stats in color_sources:
             all_fields.update(stats.keys())
 
+        merged_stats = {}
         for field in all_fields:
             if field in constants.COUNT_FIELDS:
-                # Sum count fields across all sources
                 merged_stats[field] = sum(
-                    stats.get(field, 0) for stats, _ in color_sources
+                    stats.get(field, 0) for stats in color_sources
                 )
             else:
-                # Weighted average for rate/average fields
-                # Skip sources where the corresponding count is 0 (no data)
                 count_field = constants.WIN_RATE_FIELDS_DICT.get(field)
                 total_weighted = 0.0
                 total_weight = 0.0
-                for stats, w in color_sources:
+                for stats in color_sources:
                     if field not in stats:
                         continue
-                    # For win rate fields, skip if their count field is 0
-                    # For other fields (alsa, ata, iwd), skip if ngp is 0
                     check_field = count_field if count_field else constants.DATA_FIELD_NGP
                     if stats.get(check_field, 0) == 0:
                         continue
-                    # For win rate fields, skip if the rate is 0.0 (suppressed/insufficient data from 17Lands)
                     if count_field is not None and stats[field] == 0.0:
                         continue
-                    total_weighted += stats[field] * w
-                    total_weight += w
+                    total_weighted += stats[field] * 1.0  # TODO: use count as weight in Task 5
+                    total_weight += 1.0
                 if total_weight > 0:
                     merged_stats[field] = round(total_weighted / total_weight, 1)
                 else:

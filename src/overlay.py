@@ -3446,7 +3446,7 @@ class Overlay(ScaledWindow):
                     if len(all_datasets) > 1:
                         status.set("Merging Datasets")
                         popup.update()
-                        merged = merge_datasets(all_datasets, all_weights)
+                        merged = merge_datasets(all_datasets)
                         self.extractor.combined_data = merged
 
                 # Fetch and inject GoatBots prices (MTGO only)
