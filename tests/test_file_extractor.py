@@ -559,6 +559,18 @@ class TestMergeDatasets:
         assert ad[constants.DATA_FIELD_OHWR] == pytest.approx(51.0, abs=0.1)
 
 
+    def test_merge_meta_game_count_summed(self):
+        """merged meta.game_count is the sum across all sources."""
+        ds_a = _make_dataset({}, game_count=59529)
+        ds_b = _make_dataset({}, game_count=12000)
+        ds_c = _make_dataset({}, game_count=8500)
+        ds_d = _make_dataset({}, game_count=3200)
+
+        result = merge_datasets([ds_a, ds_b, ds_c, ds_d])
+
+        assert result["meta"]["game_count"] == 59529 + 12000 + 8500 + 3200
+
+
 @patch("src.file_extractor.os.remove")
 @patch("src.file_extractor.os.listdir")
 def test_delete_old_set_files(mock_listdir, mock_remove):
