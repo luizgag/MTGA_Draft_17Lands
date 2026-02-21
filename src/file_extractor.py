@@ -130,7 +130,8 @@ def _merge_deck_colors(sources):
     """Merge the deck_colors section for a single card.
 
     sources: List[card_data dict] — no weights, all are included.
-    Rate fields temporarily use equal weighting (game-count weighting added in Task 5).
+    Rate fields are weighted by their corresponding game-count field.
+    iwd is re-derived as merged_gihwr - merged_gnswr after all rates are computed.
     """
     all_colors = set()
     for card_data in sources:
@@ -153,29 +154,44 @@ def _merge_deck_colors(sources):
             all_fields.update(stats.keys())
 
         merged_stats = {}
+
         for field in all_fields:
             if field in constants.COUNT_FIELDS:
                 merged_stats[field] = sum(
                     stats.get(field, 0) for stats in color_sources
                 )
+            elif field == constants.DATA_FIELD_IWD:
+                pass  # re-derived below after gihwr and gnswr are computed
             else:
                 count_field = constants.WIN_RATE_FIELDS_DICT.get(field)
+                # For alsa/ata (not in WIN_RATE_FIELDS_DICT): use ngp as weight
+                check_field = count_field if count_field else constants.DATA_FIELD_NGP
                 total_weighted = 0.0
                 total_weight = 0.0
                 for stats in color_sources:
                     if field not in stats:
                         continue
-                    check_field = count_field if count_field else constants.DATA_FIELD_NGP
-                    if stats.get(check_field, 0) == 0:
+                    effective_weight = stats.get(check_field, 0)
+                    if effective_weight == 0:
                         continue
+                    # 0.0 rate with nonzero count = suppressed by 17Lands API, skip
                     if count_field is not None and stats[field] == 0.0:
                         continue
-                    total_weighted += stats[field] * 1.0  # TODO: use count as weight in Task 5
-                    total_weight += 1.0
+                    total_weighted += stats[field] * effective_weight
+                    total_weight += effective_weight
                 if total_weight > 0:
                     merged_stats[field] = round(total_weighted / total_weight, 1)
                 else:
                     merged_stats[field] = 0.0
+
+        # Re-derive iwd = gihwr - gnswr (17Lands definition, game-count weighted implicitly)
+        if constants.DATA_FIELD_IWD in all_fields:
+            gihwr = merged_stats.get(constants.DATA_FIELD_GIHWR, 0.0)
+            gnswr = merged_stats.get(constants.DATA_FIELD_GNSWR, 0.0)
+            if gihwr != 0.0 or gnswr != 0.0:
+                merged_stats[constants.DATA_FIELD_IWD] = round(gihwr - gnswr, 1)
+            else:
+                merged_stats[constants.DATA_FIELD_IWD] = 0.0
 
         merged[color] = merged_stats
 
