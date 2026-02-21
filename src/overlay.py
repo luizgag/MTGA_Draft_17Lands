@@ -3416,7 +3416,6 @@ class Overlay(ScaledWindow):
                 # Download remaining sources and merge
                 if len(active_sources) > 1:
                     all_datasets = [copy.deepcopy(self.extractor.combined_data)]
-                    all_weights = [active_sources[0].weight]
 
                     for idx, source in enumerate(active_sources[1:], start=2):
                         status.set(f"Downloading Source {idx}/{len(active_sources)} - Waiting...")
@@ -3439,7 +3438,6 @@ class Overlay(ScaledWindow):
 
                         if src_result:
                             all_datasets.append(copy.deepcopy(self.extractor.combined_data))
-                            all_weights.append(source.weight)
                         else:
                             logger.error("Source %d failed: %s", idx, src_string)
 
