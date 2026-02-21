@@ -31,9 +31,10 @@ class DatasetSource(BaseModel):
     def _migrate_weight(cls, data):
         """Backward-compat: old configs have 'weight' float instead of 'enabled' bool."""
         if isinstance(data, dict) and "weight" in data:
+            data = {**data}  # don't mutate caller's dict
             if "enabled" not in data:
                 data["enabled"] = float(data["weight"]) > 0
-            data.pop("weight", None)
+            del data["weight"]
         return data
 
 
