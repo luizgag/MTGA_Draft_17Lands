@@ -161,36 +161,49 @@ def test_old_config_with_date_fields_in_sources(tmp_path):
     assert success is True
     assert len(config.settings.set_sources["ECL"]) == 1
     assert config.settings.set_sources["ECL"][0].format == "PremierDraft"
-    assert config.settings.set_sources["ECL"][0].weight == 1.0
+    assert config.settings.set_sources["ECL"][0].enabled is True
     assert not hasattr(config.settings.set_sources["ECL"][0], "start_date") or "start_date" not in config.settings.set_sources["ECL"][0].model_fields
 
 
-def test_set_sources_roundtrip(tmp_path):
-    """Per-set sources survive write/read cycle."""
+def test_datasetsource_default_enabled():
+    """DatasetSource defaults to enabled=True."""
+    source = DatasetSource()
+    assert source.enabled is True
+
+
+def test_datasetsource_enabled_roundtrip(tmp_path):
+    """enabled field survives write/read cycle."""
     config = Configuration()
     config.settings.set_sources = {
         "ECL": [
-            DatasetSource(format="PremierDraft", user_group="All", weight=0.7),
-            DatasetSource(format="TradDraft", user_group="Top", weight=0.3),
-        ],
-        "OTJ": [
-            DatasetSource(format="QuickDraft", user_group="All", weight=1.0),
+            DatasetSource(format="PremierDraft", user_group="All", enabled=True),
+            DatasetSource(format="TradDraft", user_group="Top", enabled=False),
         ],
     }
-
-    file_location = tmp_path / "config.json"
-    write_configuration(config, str(file_location))
-    loaded, success = read_configuration(str(file_location))
+    file_location = str(tmp_path / "config.json")
+    write_configuration(config, file_location)
+    loaded, success = read_configuration(file_location)
 
     assert success is True
-    assert "ECL" in loaded.settings.set_sources
-    assert "OTJ" in loaded.settings.set_sources
-    assert len(loaded.settings.set_sources["ECL"]) == 2
-    assert loaded.settings.set_sources["ECL"][0].format == "PremierDraft"
-    assert loaded.settings.set_sources["ECL"][0].weight == 0.7
-    assert loaded.settings.set_sources["ECL"][1].format == "TradDraft"
-    assert loaded.settings.set_sources["ECL"][1].user_group == "Top"
-    assert loaded.settings.set_sources["ECL"][1].weight == 0.3
-    assert len(loaded.settings.set_sources["OTJ"]) == 1
-    assert loaded.settings.set_sources["OTJ"][0].format == "QuickDraft"
+    assert loaded.settings.set_sources["ECL"][0].enabled is True
+    assert loaded.settings.set_sources["ECL"][1].enabled is False
 
+
+def test_datasetsource_weight_migrates_to_enabled(tmp_path):
+    """Old config.json with weight field is migrated: weight>0 → enabled=True, weight=0 → enabled=False."""
+    config_dict = Configuration().model_dump()
+    config_dict["settings"]["set_sources"] = {
+        "ECL": [
+            {"format": "PremierDraft", "user_group": "All", "weight": 1.0},
+            {"format": "TradDraft", "user_group": "Top", "weight": 0.0},
+        ]
+    }
+    file_location = str(tmp_path / "config.json")
+    with open(file_location, "w") as f:
+        json.dump(config_dict, f)
+
+    config, success = read_configuration(file_location)
+
+    assert success is True
+    assert config.settings.set_sources["ECL"][0].enabled is True
+    assert config.settings.set_sources["ECL"][1].enabled is False

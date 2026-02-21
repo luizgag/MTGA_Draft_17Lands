@@ -1,7 +1,7 @@
 """This module encompasses functions for reading from, writing to, and resetting the configuration file"""
 import json
 import os
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, field_validator, Field, model_validator
 from typing import Dict, List, Tuple
 from src import constants
 from src.logger import create_logger
@@ -24,7 +24,17 @@ class DatasetSource(BaseModel):
     """A single 17Lands data source with filter configuration."""
     format: str = "PremierDraft"
     user_group: str = "All"
-    weight: float = 1.0
+    enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_weight(cls, data):
+        """Backward-compat: old configs have 'weight' float instead of 'enabled' bool."""
+        if isinstance(data, dict) and "weight" in data:
+            if "enabled" not in data:
+                data["enabled"] = float(data["weight"]) > 0
+            data.pop("weight", None)
+        return data
 
 
 class Settings(BaseModel):
