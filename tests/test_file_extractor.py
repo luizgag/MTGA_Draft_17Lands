@@ -454,13 +454,16 @@ class TestMergeDatasets:
         assert card[constants.DATA_SECTION_IMAGES] == ["http://img/a.jpg"]
 
     def test_merge_color_ratings_blended(self):
-        """color_ratings section is also weighted-averaged."""
+        """color_ratings weighted by each source's meta.game_count."""
         ds_a = _make_dataset({}, color_ratings={"WU": 55.0, "BR": 50.0}, game_count=8000)
         ds_b = _make_dataset({}, color_ratings={"WU": 60.0, "BR": 52.0}, game_count=4000)
 
         result = merge_datasets([ds_a, ds_b])
-        expected_wu = round((55.0 * 0.7 + 60.0 * 0.3) / (0.7 + 0.3), 1)
-        expected_br = round((50.0 * 0.7 + 52.0 * 0.3) / (0.7 + 0.3), 1)
+
+        # Weighted by game_count: (55*8000 + 60*4000) / 12000 = 56.7
+        expected_wu = round((55.0 * 8000 + 60.0 * 4000) / (8000 + 4000), 1)
+        # (50*8000 + 52*4000) / 12000 = 50.7
+        expected_br = round((50.0 * 8000 + 52.0 * 4000) / (8000 + 4000), 1)
         assert result["color_ratings"]["WU"] == pytest.approx(expected_wu)
         assert result["color_ratings"]["BR"] == pytest.approx(expected_br)
 

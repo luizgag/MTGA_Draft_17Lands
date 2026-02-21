@@ -74,7 +74,7 @@ def merge_datasets(datasets: List[dict]) -> dict:
 
 
 def _merge_color_ratings(datasets):
-    """Weighted-average the color_ratings section across datasets."""
+    """Weighted-average the color_ratings section using meta.game_count as weight."""
     all_colors = set()
     for ds in datasets:
         if "color_ratings" in ds:
@@ -86,9 +86,10 @@ def _merge_color_ratings(datasets):
         total_weight = 0.0
         for ds in datasets:
             cr = ds.get("color_ratings", {})
-            if color in cr:
-                total_weighted += cr[color] * 1.0  # TODO: use game_count weight in Task 4
-                total_weight += 1.0
+            game_count = ds.get("meta", {}).get("game_count", 0)
+            if color in cr and game_count > 0:
+                total_weighted += cr[color] * game_count
+                total_weight += game_count
         if total_weight > 0:
             merged[color] = round(total_weighted / total_weight, 1)
 
