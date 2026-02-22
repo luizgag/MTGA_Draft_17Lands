@@ -47,7 +47,7 @@ def merge_datasets(datasets: List[dict]) -> dict:
     For each card (by Arena ID), for each numeric field in deck_colors:
       - Count fields (ngp, ngoh, gih, ngnd, ngd): summed across all sources
       - Rate/average fields: weighted by actual game count for that field
-      - iwd: re-derived as merged_gihwr - merged_gnswr
+            - iwd: weighted from 17Lands-provided values using gih as weight
 
     color_ratings are weighted by each source's meta.game_count.
     meta.game_count in the result is the sum across all sources.
@@ -131,7 +131,6 @@ def _merge_deck_colors(sources):
 
     sources: List[card_data dict] — no weights, all are included.
     Rate fields are weighted by their corresponding game-count field.
-    iwd is re-derived as merged_gihwr - merged_gnswr after all rates are computed.
     """
     all_colors = set()
     for card_data in sources:
@@ -160,8 +159,6 @@ def _merge_deck_colors(sources):
                 merged_stats[field] = sum(
                     stats.get(field, 0) for stats in color_sources
                 )
-            elif field == constants.DATA_FIELD_IWD:
-                pass  # re-derived below after gihwr and gnswr are computed
             else:
                 count_field = constants.WIN_RATE_FIELDS_DICT.get(field)
                 # For alsa/ata (not in WIN_RATE_FIELDS_DICT): use ngp as weight
@@ -183,15 +180,6 @@ def _merge_deck_colors(sources):
                     merged_stats[field] = round(total_weighted / total_weight, 1)
                 else:
                     merged_stats[field] = 0.0
-
-        # Re-derive iwd = gihwr - gnswr (17Lands definition, game-count weighted implicitly)
-        if constants.DATA_FIELD_IWD in all_fields:
-            gihwr = merged_stats.get(constants.DATA_FIELD_GIHWR, 0.0)
-            gnswr = merged_stats.get(constants.DATA_FIELD_GNSWR, 0.0)
-            if gihwr != 0.0 or gnswr != 0.0:
-                merged_stats[constants.DATA_FIELD_IWD] = round(gihwr - gnswr, 1)
-            else:
-                merged_stats[constants.DATA_FIELD_IWD] = 0.0
 
         merged[color] = merged_stats
 

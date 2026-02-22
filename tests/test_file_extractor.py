@@ -416,10 +416,10 @@ class TestMergeDatasets:
         assert ad[constants.DATA_FIELD_NGD] == 180
 
     def test_merge_all_rate_fields_game_count_weighted(self):
-        """All rate fields use game-count weighting. iwd excluded (re-derived in Task 6 test)."""
-        stats_a = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0, alsa=5.0, ata=3.0,
+        """All rate fields use game-count weighting, including iwd from 17Lands."""
+        stats_a = _stats(gihwr=50.0, ohwr=48.0, gpwr=52.0, gnswr=46.0, gdwr=54.0, alsa=5.0, ata=3.0, iwd=4.0,
                          ngp=1000, ngoh=500, gih=800, ngnd=200, ngd=600)
-        stats_b = _stats(gihwr=60.0, ohwr=58.0, gpwr=62.0, gnswr=56.0, gdwr=64.0, alsa=3.0, ata=2.0,
+        stats_b = _stats(gihwr=60.0, ohwr=58.0, gpwr=62.0, gnswr=56.0, gdwr=64.0, alsa=3.0, ata=2.0, iwd=10.0,
                          ngp=800, ngoh=400, gih=600, ngnd=150, ngd=500)
         ds_a = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_a))})
         ds_b = _make_dataset({"1": _make_card("C", [], [], "common", 1, "", [], _make_deck_colors(stats_b))})
@@ -437,6 +437,8 @@ class TestMergeDatasets:
         assert ad[constants.DATA_FIELD_GNSWR] == pytest.approx(50.3, abs=0.1)
         # gdwr: (54*600 + 64*500) / 1100 = 58.5
         assert ad[constants.DATA_FIELD_GDWR] == pytest.approx(58.5, abs=0.1)
+        # iwd: (4.0*800 + 10.0*600) / 1400 = 6.6
+        assert ad[constants.DATA_FIELD_IWD] == pytest.approx(6.6, abs=0.1)
         # alsa: (5.0*1000 + 3.0*800) / 1800 = 4.1
         assert ad[constants.DATA_FIELD_ALSA] == pytest.approx(4.1, abs=0.1)
         # ata: (3.0*1000 + 2.0*800) / 1800 = 2.6
@@ -574,13 +576,8 @@ class TestMergeDatasets:
 
         assert result["meta"]["game_count"] == 59529 + 12000 + 8500 + 3200
 
-    def test_merge_iwd_rederived_as_gihwr_minus_gnswr(self):
-        """iwd is re-derived as merged_gihwr - merged_gnswr, not averaged directly.
-
-        17Lands definition: IWD (Improvement When Drawn) = GIHWR - GNSWR.
-        Because both components are already game-count weighted, the merged iwd
-        naturally reflects game-count weighting.
-        """
+    def test_merge_iwd_weighted_from_17lands_values(self):
+        """iwd uses 17Lands-provided values and is weighted by gih game count."""
         # Source A: gihwr=55.0, gnswr=50.0 → iwd=5.0 (gih=1000, ngnd=500)
         # Source B: gihwr=65.0, gnswr=55.0 → iwd=10.0 (gih=200, ngnd=100)
         stats_a = _stats(gihwr=55.0, gnswr=50.0, iwd=5.0, ngp=1500, gih=1000, ngnd=500)
@@ -591,18 +588,18 @@ class TestMergeDatasets:
         result = merge_datasets([ds_a, ds_b])
         ad = result["card_ratings"]["1"][constants.DATA_FIELD_DECK_COLORS][constants.FILTER_OPTION_ALL_DECKS]
 
-        # merged_gihwr: (55*1000 + 65*200) / 1200 = 56.7
-        expected_gihwr = round((55.0 * 1000 + 65.0 * 200) / 1200, 1)
-        # merged_gnswr: (50*500 + 55*100) / 600 = 50.8
-        expected_gnswr = round((50.0 * 500 + 55.0 * 100) / 600, 1)
-        # merged_iwd = 56.7 - 50.8 = 5.9 (NOT a simple average of 5.0 and 10.0)
-        expected_iwd = round(expected_gihwr - expected_gnswr, 1)
+        # merged_iwd: (5.0*1000 + 10.0*200) / 1200 = 5.8
+        expected_iwd = round((5.0 * 1000 + 10.0 * 200) / 1200, 1)
 
-        assert ad[constants.DATA_FIELD_GIHWR] == pytest.approx(expected_gihwr, abs=0.1)
-        assert ad[constants.DATA_FIELD_GNSWR] == pytest.approx(expected_gnswr, abs=0.1)
+        # For sanity, this differs from the old re-derived path (56.7 - 50.8 = 5.9)
+        expected_rederived = round(
+            round((55.0 * 1000 + 65.0 * 200) / 1200, 1)
+            - round((50.0 * 500 + 55.0 * 100) / 600, 1),
+            1,
+        )
+
         assert ad[constants.DATA_FIELD_IWD] == pytest.approx(expected_iwd, abs=0.1)
-        # Sanity check: iwd != simple average of 5.0 and 10.0
-        assert ad[constants.DATA_FIELD_IWD] != pytest.approx(7.5, abs=0.5)
+        assert ad[constants.DATA_FIELD_IWD] != pytest.approx(expected_rederived, abs=0.05)
 
 
 

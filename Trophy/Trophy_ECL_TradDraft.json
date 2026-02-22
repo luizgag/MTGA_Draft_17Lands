@@ -1,0 +1,13 @@
+{
+    "meta": {
+        "set_code": "ECL",
+        "format_name": "Traditional Draft",
+        "generated_at": "2026-02-22 11:12:40",
+        "source_urls": {
+            "Untapped.gg": "https://mtga.untapped.gg/limited/draft/lorwyn-eclipsed/trophy-decks?eventType=TRADITIONAL_HUMAN_DRAFT",
+            "17Lands Color Ratings": "https://www.17lands.com/color_ratings/data?expansion=ECL&event_type=TradDraft"
+        }
+    },
+    "archetypes": [],
+    "cards": []
+}
