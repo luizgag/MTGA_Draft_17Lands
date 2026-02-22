@@ -72,28 +72,32 @@ cd Tools/TierScraper17Lands && npm install --save-dev jest-environment-jsdom && 
 
 ### Key modules
 
-- **overlay.py** (~4300 lines): Main application class. Tkinter UI, event loop, table rendering, tooltips, menus, and all user-facing windows (Taken Cards, Suggested Decks, Card Compare, Settings). This is the orchestrator that ties all other modules together.
+- **overlay.py** (~4300 lines): Main application class. Tkinter UI, event loop, table rendering, tooltips, menus, and all user-facing windows (Taken Cards, Suggested Decks, Card Compare, Card Data, Settings). This is the orchestrator that ties all other modules together.
 - **log_scanner.py** (~1237 lines): `ArenaScanner` watches Arena's Player.log for draft events. Parses JSON log entries for pack contents, picks, and event detection. Handles multiple Arena log formats (the format has changed across Arena updates).
 - **card_logic.py** (~1167 lines): `CardResult` processes card ratings. Calculates win rates, letter grades (A+ to F based on standard deviations), and 5-point ratings. Implements deck suggestions (Aggro/Mid/Control archetypes) and color filtering.
 - **file_extractor.py** (~1092 lines): Downloads card data from the 17Lands API and extracts card databases from Arena's SQLite data files.
 - **dataset.py** (~316 lines): `Dataset` class loads and provides card lookup (by Arena ID or name) from JSON data files stored in `Sets/`.
-- **configuration.py** (~200 lines): Pydantic-based configuration system. Models: `Configuration`, `Settings`, `CardLogic`, `Features`, `CardData`, `DatasetSource`. Persists to `config.json`. Key settings: `Settings.platform` (`"MTGA"` or `"MTGO"`), `Settings.mtgo_log_folder`, `Settings.set_sources: Dict[str, List[DatasetSource]]` for per-set multi-source merging, `Features.archetype_openness_enabled`.
+- **configuration.py** (~200 lines): Pydantic-based configuration system. Models: `Configuration`, `Settings`, `CardLogic`, `Features`, `CardData`, `DatasetSource`. Persists to `config.json`. Key settings: `Settings.platform` (`"MTGA"` or `"MTGO"`), `Settings.mtgo_log_folder`, `Settings.set_sources: Dict[str, List[DatasetSource]]` for per-set multi-source merging, `Features.archetype_openness_enabled`. `DatasetSource` fields: `format`, `user_group`, `enabled: bool` (replaced the old `weight: float`; old configs auto-migrate via Pydantic validator — `weight > 0` becomes `enabled=True`).
 - **limited_sets.py** (~431 lines): Manages set information, fetches set lists from Scryfall API.
 - **tier_list.py** (~372 lines): Downloads tier lists from 17Lands API. Pydantic models: `TierList`, `Meta`, `Rating`. Stores as JSON in `Tier/`.
 - **set_metrics.py** (98 lines): `SetMetrics` calculates mean/standard deviation for win rate fields. Uses scipy's normal distribution for grade/rating conversions.
 - **constants.py** (~600 lines): All configuration constants — 17Lands field mappings, Arena log patterns, color definitions, UI defaults, URLs.
 - **mtgo_scanner.py** (~655 lines): `MtgoScanner` watches a folder for MTGO draft log files (plain text). Implements two-phase incremental parsing: Phase 1 detects pack shown (cards without pick marker), Phase 2 detects pick made (`-->` marker). Shares the same public interface as `ArenaScanner` so overlay code is platform-agnostic. MTGO filenames encode set codes (e.g., `ECLECLECL` = 3 packs of ECL).
-- **archetype_openness.py** (~487 lines): `OpennessTracker` scores how "open" each archetype is during a draft. Supports four scoring methods: `simple`, `normalized`, `bayesian_beta`, and `hmm_hybrid`. Card weights from 17Lands `ngp` ratios distinguish archetype-specific cards from generics. `auto_detect_archetypes()` builds archetype configs from dataset data. `ArchetypeConfig` holds tuning parameters including HMM-specific fields (`hmm_transition_decay`, `hmm_emission_scale`, `hmm_openness_factor`, `hmm_pick_ramp`, `rarity_odds`).
+- **archetype_openness.py** (~860 lines): `OpennessTracker` scores how "open" each archetype is during a draft. Supports five scoring methods: `simple`, `normalized`, `bayesian_beta`, `hmm_hybrid`, and `bayesian_survival`. Card weights from 17Lands `ngp` ratios distinguish archetype-specific cards from generics. `auto_detect_archetypes()` builds archetype configs from dataset data. `ArchetypeConfig` holds tuning parameters including `hmm_transition_decay`, `hmm_emission_scale`, `hmm_openness_factor`, `hmm_pick_ramp`, `rarity_odds`, `absence_enabled`, and `slots_per_rarity`.
+- **trophy_analysis.py**: Fetches and displays trophy deck data from 17Lands and Untapped.gg (uses Playwright for scraping). Stores results in `Trophy/`. Tkinter window launched from the overlay menu.
 - **archetype_editor.py**: Tkinter editor for archetype configurations. Auto-detection with threshold/weight sliders, per-archetype card lists with editable weights, scoring method selection (Simple/Weighted/Bayesian %), and pack weight controls. Configs persist to `Archetypes/{SET}_archetypes.json`.
 
 ### Key subsystems
 
-**Dataset merging**: `merge_datasets()` in `file_extractor.py` combines multiple 17Lands sources with weighted averaging. `COUNT_FIELDS` (ngp, ngoh, gih, ngnd, ngd) are summed; win rate fields are weighted-averaged with zero-count and zero-rate filtering. Per-set sources configured via `DatasetSource` model. Merged files use 2-segment naming (`{SET}_Data.json`); old 4-segment files auto-deleted by `delete_old_set_files()`.
+**Dataset merging**: `merge_datasets()` in `file_extractor.py` combines multiple 17Lands sources. `COUNT_FIELDS` (ngp, ngoh, gih, ngnd, ngd) are summed; win rate fields are **game-count weighted** (`merged_r = Σ(r_i × c_i) / Σ(c_i)` using the relevant count field per rate — e.g. `gihwr` weighted by `gih`, `gpwr` by `ngp`). `iwd` is re-derived as `merged_gihwr − merged_gnswr` after merging other rates. `meta.game_count` is summed across all sources. `merge_datasets()` takes no `weights` parameter — callers filter to enabled sources before passing. Per-set sources configured via `DatasetSource` model. Merged files use 2-segment naming (`{SET}_Data.json`); old 4-segment files auto-deleted by `delete_old_set_files()`.
 
-**Archetype openness**: `OpennessTracker` supports four scoring methods configured via `ArchetypeConfig.scoring_method`:
+**Archetype openness**: `OpennessTracker` supports five scoring methods configured via `ArchetypeConfig.scoring_method`:
 - **simple/normalized**: Sum-of-signals scoring. Signal = `(pick - ata) / (ata + pick)^2` scaled by card/pack weights.
 - **bayesian_beta**: Beta(alpha, beta) posteriors per archetype. Signal magnitude `(pick - ata) / (pick + ata)` updates alpha (positive) or beta (negative). Returns P(open) as posterior mean with 95% credible interval.
 - **hmm_hybrid**: HMM-inspired log-odds tracker using a geometric survival model. Emission = log Bayes factor `(p-1) * [log(1 - 1/(a*F)) - log(1 - 1/a)]` where F is the openness factor. Features: rarity-weighted reliability (rarer cards = weaker signal), pick ramp (reduced early-pick weight), exponential decay between observations (`hmm_transition_decay`), and variance tracking via decayed sum-of-squared emissions for 95% credible intervals. Returns sigmoid(log_odds) as P(open).
+- **bayesian_survival**: Unified three-signal log-odds framework sharing the same geometric survival model. Signal 1 (wheeling, via `record_pack`): `λ₁ = (p-1) * log(q_open/q_closed)` — card present at pick p, always ≥ 0. Signal 2 (missing at wheel, via `record_missing`): `λ₂ = log((1-S_open)/(1-S_closed))` — archetype card gone from returned pack, always ≤ 0. Signal 3 (draft-wide absence, computed inside `get_scores`): `λ₃ = k*log(see_open/see_closed) + (N-k)*log((1-see_open)/(1-see_closed))` — how often expected cards were observed across all packs. All signals share the same weight chain as hmm_hybrid. Returns raw log-odds. Config: `absence_enabled: bool`, `slots_per_rarity: Dict[str, int]`.
+
+`OpennessTracker` supplementary API: `record_missing(cards, pick, pack)` (Signal 2, bayesian_survival only); `record_passed(cards, pick, pack)` (negative signal for cards the drafter passes, uses inverted pack weights); `revert_returned(card_names, pack, current_pick)` (removes passed signal when a card wheels back); `get_positive_scores()` (wheeling signals only); `get_passed_scores()` (passed-card signals, always negative); `get_combined_scores()` (positive + passed combined).
 
 Confidence shown via opacity: none (0 signals, 40%), low (1-4, 60%), medium (5-14, 80%), high (15+, 100%). Green/gray/red bar colors based on P(open) thresholds (0.55/0.45).
 
@@ -108,7 +112,10 @@ Confidence shown via opacity: none (0 signals, 40%), low (1-4, 60%), medium (5-1
 6. **Archetype openness integration**: When enabled, the overlay replays all openness signals from pick 1 through the current history position on each navigation (`__replay_hindsight_openness()`), giving a "what would openness have shown at this point" view. The tracker is reset before each replay to avoid stale accumulation.
 
 ### Runtime directories (gitignored)
-`Archetypes/` (per-set archetype configs as JSON), `Debug/` (logs), `Downloads/`, `Logs/` (draft logs), `Screenshots/` (P1P1 OCR), `Sets/` (17Lands datasets as JSON), `Temp/`, `Tier/` (tier list data).
+`Archetypes/` (per-set archetype configs as JSON), `Debug/` (logs), `Downloads/`, `Logs/` (draft logs), `Screenshots/` (P1P1 OCR), `Sets/` (17Lands datasets as JSON), `Temp/`, `Tier/` (tier list data), `Trophy/` (trophy deck cache from 17Lands/Untapped.gg).
+
+### Design docs
+`docs/plans/` contains dated Markdown design documents for completed and in-progress features (TDD specs, architecture decisions). `docs/current_known_bugs.md` tracks bugs discovered during development.
 
 ### External services
 - **17Lands API**: Card ratings, tier lists, color ratings
@@ -123,6 +130,19 @@ Confidence shown via opacity: none (0 signals, 40%), low (1-4, 60%), medium (5-1
 - Tests use `pytest.fixture`, `@pytest.mark.parametrize`, and `tmp_path` for file I/O
 - `test_log_scanner.py` is the largest test file (~3478 lines) with extensive Arena log format coverage
 - CI runs on all three platforms (Linux, Windows, macOS) on PRs that modify `.py` files
+
+## Version History
+
+Maintain a `CHANGELOG.md` at the project root. Increment the version using decimal versioning:
+- **+0.01**: Minor fixes, formula tweaks, small adjustments with no new public API
+- **+0.1**: New features, new scoring methods, new UI panels, new public API methods
+- **+1.0**: Breaking changes — removed/renamed public API, incompatible config schema changes, dropped platform support
+
+Update `CHANGELOG.md` on every meaningful commit. Format:
+```
+## X.Y.Z — YYYY-MM-DD
+- Short description of change
+```
 
 ## Code Conventions
 

@@ -257,6 +257,8 @@ class Overlay(ScaledWindow):
             label="Compare Cards", command=self.__open_card_compare_window)
         self.cardmenu.add_command(
             label="Archetype Editor", command=self.__open_archetype_editor)
+        self.cardmenu.add_command(
+            label="Card Data", command=self.__open_card_data_window)
 
         self.settingsmenu = tkinter.Menu(self.menubar, tearoff=0)
         self.settingsmenu.add_command(
@@ -372,6 +374,29 @@ class Overlay(ScaledWindow):
         self.compare_table = None
         self.compare_list = None
         self.suggester_table = None
+
+        # Card Data window
+        self.card_data_table = None
+        self.card_data_deck_filter_selection = tkinter.StringVar(self.root)
+        self.card_data_deck_filter_selection.set(constants.FILTER_OPTION_ALL_DECKS)
+        self.card_data_common_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_uncommon_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_rare_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_mythic_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_gihwr_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_ohwr_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_gpwr_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_gnswr_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_gdwr_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_ata_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_alsa_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_iwd_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_wheel_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_rarity_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_colors_checkbox_value = tkinter.IntVar(self.root, value=1)
+        self.card_data_ngp_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self.card_data_gih_checkbox_value = tkinter.IntVar(self.root, value=0)
+        self._card_data_trace_ids = []
 
         self.about_window_open = False
         self.sets_window_open = False
@@ -2730,6 +2755,260 @@ class Overlay(ScaledWindow):
 
             self.__update_suggest_table(
                 deck_colors_value, suggested_decks, deck_color_options)
+        except Exception as error:
+            logger.error(error)
+
+    def __close_card_data_window(self, popup):
+        '''Clear card data table and remove active traces when the Card Data window is closed'''
+        for var, tid in self._card_data_trace_ids:
+            try:
+                var.trace_remove("write", tid)
+            except Exception:
+                pass
+        self._card_data_trace_ids = []
+        self.card_data_table = None
+        popup.destroy()
+
+    def __open_card_data_window(self):
+        '''Creates the Card Data window showing all cards with statistical columns and filters'''
+
+        if self.card_data_table:
+            return
+
+        popup = tkinter.Toplevel()
+        popup.wm_title("Card Data")
+        popup.attributes("-topmost", True)
+        popup.resizable(width=True, height=True)
+        popup.protocol(
+            "WM_DELETE_WINDOW", lambda window=popup: self.__close_card_data_window(window))
+
+        try:
+            tkinter.Grid.rowconfigure(popup, 3, weight=1)
+            tkinter.Grid.columnconfigure(popup, 0, weight=1)
+
+            headers = {"Column1":  {"width": .28, "anchor": tkinter.W},
+                       "Column2":  {"width": .08, "anchor": tkinter.CENTER},
+                       "Column3":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column4":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column5":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column6":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column7":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column8":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column9":  {"width": .09, "anchor": tkinter.CENTER},
+                       "Column10": {"width": .09, "anchor": tkinter.CENTER},
+                       "Column11": {"width": .09, "anchor": tkinter.CENTER},
+                       "Column12": {"width": .07, "anchor": tkinter.CENTER},
+                       "Column13": {"width": .09, "anchor": tkinter.CENTER},
+                       "Column14": {"width": .09, "anchor": tkinter.CENTER}}
+
+            table_width = self._scale_value(200)
+            column_checkboxes = [
+                self.card_data_rarity_checkbox_value,
+                self.card_data_gihwr_checkbox_value,
+                self.card_data_ohwr_checkbox_value,
+                self.card_data_gpwr_checkbox_value,
+                self.card_data_gnswr_checkbox_value,
+                self.card_data_gdwr_checkbox_value,
+                self.card_data_ata_checkbox_value,
+                self.card_data_alsa_checkbox_value,
+                self.card_data_iwd_checkbox_value,
+                self.card_data_wheel_checkbox_value,
+                self.card_data_colors_checkbox_value,
+                self.card_data_ngp_checkbox_value,
+                self.card_data_gih_checkbox_value,
+            ]
+            for option in column_checkboxes:
+                if option.get():
+                    table_width += self._scale_value(70)
+
+            location_x, location_y = identify_safe_coordinates(self.root,
+                                                               table_width,
+                                                               self._scale_value(600),
+                                                               self._scale_value(250),
+                                                               self._scale_value(0))
+            popup.wm_geometry(f"+{location_x}+{location_y}")
+
+            # Row 0: Deck filter
+            filter_frame = tkinter.Frame(popup, highlightbackground="white", highlightthickness=2)
+            filter_frame.grid(row=0, column=0, sticky="ew", padx=2, pady=2)
+            deck_filter_label = Label(filter_frame, text="Deck Filter:", style="MainSectionsBold.TLabel", anchor="w")
+            deck_filter_list = constants.DECK_COLORS
+            deck_filter_option = OptionMenu(filter_frame, self.card_data_deck_filter_selection,
+                                            self.card_data_deck_filter_selection.get(),
+                                            *deck_filter_list, style="All.TMenubutton")
+            menu = self.root.nametowidget(deck_filter_option['menu'])
+            menu.config(font=self.fonts_dict["All.TMenubutton"])
+            deck_filter_label.pack(side=tkinter.LEFT, expand=False, fill=None)
+            deck_filter_option.pack(side=tkinter.LEFT, expand=True, fill="both")
+
+            # Row 1: Rarity filter
+            rarity_frame = tkinter.Frame(popup, highlightbackground="white", highlightthickness=2)
+            rarity_frame.grid(row=1, column=0, sticky="ew", padx=2, pady=2)
+            rarity_label = Label(rarity_frame, text="Rarity:", style="MainSectionsBold.TLabel", anchor="w")
+            rarity_label.pack(side=tkinter.LEFT, expand=False, fill=None)
+            for text, var in [("COMMON", self.card_data_common_checkbox_value),
+                               ("UNCOMMON", self.card_data_uncommon_checkbox_value),
+                               ("RARE", self.card_data_rare_checkbox_value),
+                               ("MYTHIC", self.card_data_mythic_checkbox_value)]:
+                cb = Checkbutton(rarity_frame, text=text, style="Taken.TCheckbutton",
+                                 variable=var, onvalue=1, offvalue=0)
+                cb.pack(side=tkinter.LEFT, expand=True, fill="both")
+
+            # Row 2: Column visibility
+            column_frame = tkinter.Frame(popup, highlightbackground="white", highlightthickness=2)
+            column_frame.grid(row=2, column=0, sticky="ew", padx=2, pady=2)
+            columns_label = Label(column_frame, text="Columns:", style="MainSectionsBold.TLabel", anchor="w")
+            columns_label.pack(side=tkinter.LEFT, expand=False, fill=None)
+            for text, var in [("RARITY", self.card_data_rarity_checkbox_value),
+                               ("GIHWR", self.card_data_gihwr_checkbox_value),
+                               ("OHWR", self.card_data_ohwr_checkbox_value),
+                               ("GPWR", self.card_data_gpwr_checkbox_value),
+                               ("GNSWR", self.card_data_gnswr_checkbox_value),
+                               ("GDWR", self.card_data_gdwr_checkbox_value),
+                               ("ATA", self.card_data_ata_checkbox_value),
+                               ("ALSA", self.card_data_alsa_checkbox_value),
+                               ("IWD", self.card_data_iwd_checkbox_value),
+                               ("WHEEL", self.card_data_wheel_checkbox_value),
+                               ("COLORS", self.card_data_colors_checkbox_value),
+                               ("NGP", self.card_data_ngp_checkbox_value),
+                               ("GIH", self.card_data_gih_checkbox_value)]:
+                cb = Checkbutton(column_frame, text=text, style="Taken.TCheckbutton",
+                                 variable=var, onvalue=1, offvalue=0)
+                cb.pack(side=tkinter.LEFT, expand=True, fill="both")
+
+            # Row 3: Table
+            table_frame = tkinter.Frame(popup)
+            table_frame.grid(row=3, column=0, sticky="nsew", padx=2, pady=2)
+            card_data_scrollbar = tkinter.Scrollbar(table_frame, orient=tkinter.VERTICAL)
+            card_data_scrollbar.pack(side=tkinter.RIGHT, fill=tkinter.Y)
+            self.card_data_table = self._create_header("card_data_table",
+                                                       table_frame, 0,
+                                                       self.fonts_dict["All.TableRow"],
+                                                       headers, table_width,
+                                                       True, True, constants.TABLE_STYLE, False)
+            self.card_data_table.config(yscrollcommand=card_data_scrollbar.set)
+            card_data_scrollbar.config(command=self.card_data_table.yview)
+            self.card_data_table.pack(expand=True, fill="both")
+
+            # Register traces for live updates
+            trace_targets = [
+                self.card_data_deck_filter_selection,
+                self.card_data_common_checkbox_value,
+                self.card_data_uncommon_checkbox_value,
+                self.card_data_rare_checkbox_value,
+                self.card_data_mythic_checkbox_value,
+                self.card_data_rarity_checkbox_value,
+                self.card_data_gihwr_checkbox_value,
+                self.card_data_ohwr_checkbox_value,
+                self.card_data_gpwr_checkbox_value,
+                self.card_data_gnswr_checkbox_value,
+                self.card_data_gdwr_checkbox_value,
+                self.card_data_ata_checkbox_value,
+                self.card_data_alsa_checkbox_value,
+                self.card_data_iwd_checkbox_value,
+                self.card_data_wheel_checkbox_value,
+                self.card_data_colors_checkbox_value,
+                self.card_data_ngp_checkbox_value,
+                self.card_data_gih_checkbox_value,
+            ]
+            for var in trace_targets:
+                tid = var.trace_add("write", self.__update_card_data_table)
+                self._card_data_trace_ids.append((var, tid))
+
+            self.__update_card_data_table()
+            popup.update()
+
+        except Exception as error:
+            logger.error(error)
+
+    def __update_card_data_table(self, *_):
+        '''Update the card data table based on current filter and column selections'''
+        try:
+            if self.card_data_table is None:
+                return
+
+            card_data = self.draft.set_data.get_card_ratings()
+            if not card_data:
+                return
+
+            # Deduplicate MDFCs by name
+            seen_names = set()
+            all_cards = []
+            for card in card_data.values():
+                name = card.get(constants.DATA_FIELD_NAME, "")
+                if name not in seen_names:
+                    seen_names.add(name)
+                    all_cards.append(card)
+
+            # Apply rarity filter
+            allowed_rarities = set()
+            if self.card_data_common_checkbox_value.get():
+                allowed_rarities.add(constants.CARD_RARITY_COMMON)
+            if self.card_data_uncommon_checkbox_value.get():
+                allowed_rarities.add(constants.CARD_RARITY_UNCOMMON)
+            if self.card_data_rare_checkbox_value.get():
+                allowed_rarities.add(constants.CARD_RARITY_RARE)
+            if self.card_data_mythic_checkbox_value.get():
+                allowed_rarities.add(constants.CARD_RARITY_MYTHIC)
+            filtered_cards = [c for c in all_cards
+                              if c.get(constants.DATA_FIELD_RARITY, "") in allowed_rarities]
+
+            # Deck color filter
+            filtered_colors = [self.card_data_deck_filter_selection.get()]
+
+            # Build fields dict
+            fields = {
+                "Column1":  constants.DATA_FIELD_NAME,
+                "Column2":  (constants.DATA_FIELD_RARITY if self.card_data_rarity_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column3":  (constants.DATA_FIELD_GIHWR if self.card_data_gihwr_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column4":  (constants.DATA_FIELD_OHWR if self.card_data_ohwr_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column5":  (constants.DATA_FIELD_GPWR if self.card_data_gpwr_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column6":  (constants.DATA_FIELD_GNSWR if self.card_data_gnswr_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column7":  (constants.DATA_FIELD_GDWR if self.card_data_gdwr_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column8":  (constants.DATA_FIELD_ATA if self.card_data_ata_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column9":  (constants.DATA_FIELD_ALSA if self.card_data_alsa_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column10": (constants.DATA_FIELD_IWD if self.card_data_iwd_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column11": (constants.DATA_FIELD_WHEEL if self.card_data_wheel_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column12": (constants.DATA_FIELD_COLORS if self.card_data_colors_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column13": (constants.DATA_FIELD_NGP if self.card_data_ngp_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+                "Column14": (constants.DATA_FIELD_GIH if self.card_data_gih_checkbox_value.get() else constants.DATA_FIELD_DISABLED),
+            }
+
+            result_class = CardResult(
+                self.set_metrics, self.tier_data, self.configuration, self.draft.current_pick)
+            result_list = result_class.return_results(
+                filtered_cards, filtered_colors, fields.values())
+
+            for row in self.card_data_table.get_children():
+                self.card_data_table.delete(row)
+
+            last_field_index, visible_columns = control_table_column(
+                self.card_data_table, fields)
+
+            if self.table_info["card_data_table"].column in visible_columns:
+                column_index = visible_columns[self.table_info["card_data_table"].column]
+                direction = self.table_info["card_data_table"].reverse
+                result_list = sorted(result_list, key=lambda d: field_process_sort(
+                    d["results"][column_index]), reverse=direction)
+            else:
+                result_list = sorted(result_list, key=lambda d: field_process_sort(
+                    d["results"][last_field_index]), reverse=True)
+
+            if result_list:
+                self.card_data_table.config(height=min(len(result_list), 30))
+            else:
+                self.card_data_table.config(height=1)
+
+            for count, card in enumerate(result_list):
+                field_values = tuple(card["results"])
+                row_tag = self._identify_card_row_tag(
+                    self.configuration.settings, card, count)
+                self.card_data_table.insert(
+                    "", index=count, iid=count, values=field_values, tag=(row_tag,))
+
+            self.card_data_table.bind("<<TreeviewSelect>>", lambda event: self.__process_table_click(
+                event, table=self.card_data_table, card_list=result_list, selected_color=filtered_colors))
+
         except Exception as error:
             logger.error(error)
 

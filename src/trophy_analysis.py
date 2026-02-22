@@ -179,7 +179,7 @@ def _fetch_untapped_html_with_playwright(url: str) -> str:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(1200)
 
-                current_count = page.locator('a[href*="/deck/"][href*="/draft-replay"]').count()
+                current_count = page.locator('a[href*="/deck/"][href*="/draft-replay"], a[href*="/profile/"][href*="?gameType=limited"]').count()
                 if current_count > last_count:
                     last_count = current_count
                     stalled_scrolls = 0
@@ -207,6 +207,9 @@ def _parse_untapped_deck_blocks(html_text: str, deck_ids: List[str]) -> List[Dic
     for deck_id in deck_ids:
         marker = f"/deck/{deck_id}/draft-replay"
         idx = html_text.find(marker)
+        if idx < 0:
+            marker = f"/{deck_id}?gameType=limited"
+            idx = html_text.find(marker)
         if idx >= 0:
             markers.append((deck_id, idx))
 
@@ -330,6 +333,7 @@ def _fetch_untapped_trophy_decks(set_name: str, event_type: str) -> List[TrophyD
             trophy_wins[deck_id] = int(row.get("wi", 0) or 0)
 
     html_deck_ids = re.findall(r'/deck/([A-Za-z0-9\-]+)/draft-replay', html_text)
+    html_deck_ids.extend(re.findall(r'/profile/[A-Za-z0-9\-]+/([A-Z0-9]+)\?gameType=limited', html_text))
     deck_ids = [row.get("di", "") for row in trophy_rows if row.get("di")]
     deck_ids.extend(html_deck_ids)
     deck_ids = list(dict.fromkeys([deck_id for deck_id in deck_ids if deck_id]))
@@ -456,6 +460,11 @@ def analyze_trophy_decks(set_code: str, set_name: str, format_name: str, start_d
     all_entries: List[TrophyDeckEntry] = []
     try:
         all_entries.extend(_fetch_untapped_trophy_decks(set_name, format_untapped))
+    except Exception as error:
+        logger.error(error)
+
+    try:
+        all_entries.extend(_fetch_17lands_trophy_decks(set_code, format_17lands))
     except Exception as error:
         logger.error(error)
 
