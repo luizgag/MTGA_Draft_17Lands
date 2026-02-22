@@ -2259,9 +2259,9 @@ class Overlay(ScaledWindow):
                 code = _get_current_set_code()
                 sources = self.configuration.settings.set_sources.get(code, [])
                 for src in sources:
-                    label = f"{src.format} | {src.user_group} | enabled={src.enabled}"
+                    label = f"{src.format} | {src.user_group} | w={src.weight}"
                     sources_listbox.insert(tkinter.END, label)
-                active = [s for s in sources if s.enabled]
+                active = [s for s in sources if s.weight > 0]
                 add_button['state'] = 'normal' if active else 'disabled'
 
             def _add_source():
@@ -3325,7 +3325,7 @@ class Overlay(ScaledWindow):
 
                 set_code = clean_string(sets[draft_set.get()].seventeenlands[0])
                 per_set_sources = self.configuration.settings.set_sources.get(set_code, [])
-                active_sources = [s for s in per_set_sources if s.enabled]
+                active_sources = [s for s in per_set_sources if s.weight > 0]
 
                 if not active_sources:
                     result = False
@@ -3416,11 +3416,9 @@ class Overlay(ScaledWindow):
                 # Download remaining sources and merge
                 if len(active_sources) > 1:
                     all_datasets = [copy.deepcopy(self.extractor.combined_data)]
+                    all_weights = [active_sources[0].weight]
 
                     for idx, source in enumerate(active_sources[1:], start=2):
-                        status.set(f"Downloading Source {idx}/{len(active_sources)} - Waiting...")
-                        popup.update()
-                        time.sleep(constants.CARD_RATINGS_INTER_SOURCE_DELAY_SECONDS)
                         status.set(f"Downloading Source {idx}/{len(active_sources)}")
                         popup.update()
 
@@ -3438,13 +3436,14 @@ class Overlay(ScaledWindow):
 
                         if src_result:
                             all_datasets.append(copy.deepcopy(self.extractor.combined_data))
+                            all_weights.append(source.weight)
                         else:
                             logger.error("Source %d failed: %s", idx, src_string)
 
                     if len(all_datasets) > 1:
                         status.set("Merging Datasets")
                         popup.update()
-                        merged = merge_datasets(all_datasets)
+                        merged = merge_datasets(all_datasets, all_weights)
                         self.extractor.combined_data = merged
 
                 # Fetch and inject GoatBots prices (MTGO only)
@@ -3521,17 +3520,22 @@ class Overlay(ScaledWindow):
         group_menu.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
 
         row += 1
-        enabled_var = tkinter.BooleanVar(value=source.enabled)
-        tkinter.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        tkinter.Label(dialog, text="Weight:").grid(row=row, column=0, sticky="e", padx=4, pady=2)
+        weight_entry = tkinter.Entry(dialog)
+        weight_entry.insert(0, str(source.weight))
+        weight_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
 
         row += 1
 
         def _save():
+            try:
+                weight = float(weight_entry.get())
+            except ValueError:
+                weight = 1.0
             new_source = DatasetSource(
                 format=format_var.get(),
                 user_group=group_var.get(),
-                enabled=enabled_var.get(),
+                weight=weight,
             )
             current_sources = self.configuration.settings.set_sources.get(set_code, [])
             if editing:

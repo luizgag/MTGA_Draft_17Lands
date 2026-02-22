@@ -67,7 +67,11 @@
       "mcp__plugin_playwright_playwright__browser_network_requests",
       "mcp__plugin_playwright_playwright__browser_run_code",
       "WebFetch(domain:www.goatbots.com)",
-      "mcp__plugin_playwright_playwright__browser_close"
+      "mcp__plugin_playwright_playwright__browser_close",
+      "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/tests/test_configuration.py:*)",
+      "Bash(sed:*)",
+      "Bash(Xvfb:*)"
     ]
-  }
+  },
+  "prefersReducedMotion": true
 }
