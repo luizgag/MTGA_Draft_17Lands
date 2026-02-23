@@ -66,64 +66,58 @@ def json_find(key, obj):
                     break
     return result
 
-def retrieve_local_set_list(codes, names = None):
-    '''Scans the Sets folder and returns a list of valid set files'''
+def retrieve_local_set_list(codes, names=None, db_path=None):
+    '''Returns a list of valid datasets from the SQLite database matching the given codes.
+
+    Each entry is a tuple:
+        (set_name, event_type, user_group, start_date, end_date, game_count, file_location)
+
+    All DB-stored datasets are merged (2-segment) so event_type="" and user_group="".
+    file_location is a synthetic path compatible with Dataset.open_file().
+    '''
+    import src.database as database
+
     file_list = []
     error_list = []
     cleaned_codes = [clean_string(code) for code in codes]
-    for file in os.listdir(SETS_FOLDER):
+
+    try:
+        all_meta = database.list_datasets_with_meta(db_path)
+    except Exception as error:
+        error_list.append(error)
+        return file_list, error_list
+
+    for row in all_meta:
         try:
-            name_segments = file.split("_")
-            if len(name_segments) == 2:
-                set_code = name_segments[0].upper()
-                event_type = ""
-                user_group = ""
-                file_suffix = name_segments[1]
-            elif len(name_segments) == 4:
-                set_code = name_segments[0].upper()
-                event_type = name_segments[1]
-                user_group = name_segments[2]
-                file_suffix = name_segments[3]
-            else:
+            set_code = row["set_code"]
+            if set_code not in cleaned_codes:
                 continue
 
-            if set_code not in cleaned_codes or file_suffix != SET_FILE_SUFFIX:
-                continue
-
-            if event_type != "" and (event_type not in LIMITED_TYPES_DICT or user_group not in LIMITED_GROUPS_LIST):
-                continue
-                
             if names:
-                set_name = list(names)[list(cleaned_codes).index(name_segments[0].upper())]
+                idx = list(cleaned_codes).index(set_code)
+                set_name = list(names)[idx]
             else:
                 set_name = set_code
-            
-            file_location = os.path.join(SETS_FOLDER, file)
-            result, json_data = check_file_integrity(file_location)
-            
-            if result == Result.VALID:
-                if json_data["meta"]["version"] == 1:
-                    start_date, end_date = json_data["meta"]["date_range"].split("->")
-                else:
-                    start_date = json_data["meta"]["start_date"]
-                    end_date = json_data["meta"]["end_date"]
-                    
-                if "game_count" in json_data["meta"]:
-                    game_count = int(json_data["meta"]["game_count"])
-                else:
-                    game_count = 0
-                    
-                file_list.append((
-                    set_name,
-                    event_type,
-                    user_group,
-                    start_date,
-                    end_date,
-                    game_count,
-                    file_location,
-                ))
+
+            start_date = row.get("start_date", "")
+            end_date = row.get("end_date", "")
+            game_count = int(row.get("game_count", 0) or 0)
+
+            # Synthetic file path so Dataset.open_file() can derive the set_code
+            file_location = os.path.join(SETS_FOLDER, f"{set_code}_{SET_FILE_SUFFIX}")
+
+            file_list.append((
+                set_name,
+                "",       # event_type — always empty for merged DB entries
+                "",       # user_group — always empty for merged DB entries
+                start_date,
+                end_date,
+                game_count,
+                file_location,
+            ))
         except Exception as error:
             error_list.append(error)
+
     return file_list, error_list
     
 def check_file_integrity(filename):

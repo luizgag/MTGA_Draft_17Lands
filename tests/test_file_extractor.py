@@ -247,27 +247,32 @@ def test_process_card_data_no_match(file_extractor):
     assert constants.DATA_FIELD_DECK_COLORS in card_to_process
     assert card_to_process[constants.DATA_FIELD_DECK_COLORS]["All Decks"][constants.DATA_FIELD_GIHWR] == 0.0
 
-@patch('src.file_extractor.check_file_integrity', return_value=(Result.VALID, {}))
-@patch('builtins.open', new_callable=mock_open)
-@patch('src.file_extractor.json.dump')
-def test_export_card_data(mock_json_dump, mock_file_open, mock_check_integrity, file_extractor):
+def test_export_card_data_writes_to_db(file_extractor, tmp_path):
     """
-    Tests that the export_card_data function attempts to write the correct data to the correct file.
+    Tests that export_card_data() persists data to the SQLite database.
     """
+    from src.database import load_dataset
+    db_path = str(tmp_path / "test.db")
+
     # Arrange
     file_extractor.select_sets(MagicMock(seventeenlands=["OTJ"]))
-    file_extractor.combined_data = {"meta": {}, "card_ratings": {"1": "a"}}
-    expected_filename = f"OTJ_{constants.SET_FILE_SUFFIX}"
-    expected_filepath = constants.SETS_FOLDER + os.path.sep + expected_filename
+    file_extractor.combined_data = {
+        "meta": {"start_date": "2024-01-01", "end_date": "2024-06-01", "game_count": 100, "version": 2.0},
+        "color_ratings": {"WU": 54.0},
+        "card_ratings": {},
+    }
 
     # Act
-    result = file_extractor.export_card_data()
+    result = file_extractor.export_card_data(db_path=db_path)
 
-    # Assert
+    # Assert: export_card_data returned True
     assert result is True
-    mock_file_open.assert_called_once_with(expected_filepath, 'w', encoding="utf-8", errors="replace")
-    mock_json_dump.assert_called_once_with(file_extractor.combined_data, mock_file_open())
-    mock_check_integrity.assert_called_once_with(expected_filepath)
+
+    # Assert: data is in the DB
+    loaded = load_dataset("OTJ", db_path)
+    assert loaded is not None
+    assert loaded["meta"]["start_date"] == "2024-01-01"
+    assert loaded["color_ratings"]["WU"] == 54.0
 
 
 # --- Helpers for merge_datasets tests ---

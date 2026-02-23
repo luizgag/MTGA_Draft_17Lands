@@ -11,34 +11,20 @@ from src.utils import (
 SCREENSHOT_FOLDER = os.path.join(os.getcwd(), "Screenshots")
 SCREENSHOT_PREFIX = "p1p1_screenshot_"
 
-MOCKED_SET_CODES = ["MH3","OTJ"]
-MOCKED_DATASETS = [
-    "MH3_Data.json",
-    "MH3_PremierDraft_All_Data.json",
-    "MH3_PremierDraft_Side_Data.json",
-    "MH3_PremierDraft_Top_Data.json",
-    "OTJ_Data.json",
-    "OTJ_TradDraft_Middle_Data.json",
-    "OTJ_PremierDraft_All.json",
-    "OTJ_PremierDraft_All_Data.txt",
-    "OTJ_QuickDraft_Bottom_Data.json",
-    "OTJ_FakeDraft_All_Data.json",
+MOCKED_SET_CODES = ["MH3", "OTJ"]
+
+# After DB migration only 2-segment (merged) entries exist — no 4-segment event_type entries
+MOCKED_DB_META = [
+    {"set_code": "MH3", "start_date": "2019-01-01", "end_date": "2024-07-11", "game_count": 0, "collection_date": "", "version": 2.0},
+    {"set_code": "OTJ", "start_date": "2019-01-01", "end_date": "2024-07-11", "game_count": 0, "collection_date": "", "version": 2.0},
+    # DMU is not in MOCKED_SET_CODES — should be filtered out
+    {"set_code": "DMU", "start_date": "2022-09-09", "end_date": "2023-01-01", "game_count": 5000, "collection_date": "", "version": 2.0},
 ]
+
 MOCKED_DATASETS_LIST_VALID = [
     ("MH3", "", "", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_Data.json")),
-    ("MH3", "PremierDraft", "All", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_PremierDraft_All_Data.json")),
-    ("MH3", "PremierDraft", "Top", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "MH3_PremierDraft_Top_Data.json")),
     ("OTJ", "", "", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_Data.json")),
-    ("OTJ", "TradDraft", "Middle", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_TradDraft_Middle_Data.json")),
-    ("OTJ", "QuickDraft", "Bottom", "2019-01-01", "2024-07-11", 0, os.path.join(SETS_FOLDER, "OTJ_QuickDraft_Bottom_Data.json"))
 ]
-MOCKED_DATASET_JSON = {
-    "meta" : {
-        "version": 2,
-        "start_date": "2019-01-01",
-        "end_date": "2024-07-11",
-    }
-}
 
 class TestCaptureScreenBase64str(unittest.TestCase):
 
@@ -86,16 +72,13 @@ class TestCaptureScreenBase64str(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-@patch("os.listdir")
-@patch("src.utils.check_file_integrity")
-def test_retrieve_local_set_list_skip_old(mock_integrity, mock_listdir):
-    """
-    Verify that the function ignores old datasets
-    """
-    mock_listdir.return_value = MOCKED_DATASETS
-    mock_integrity.return_value = (Result.VALID, MOCKED_DATASET_JSON)
+@patch("src.utils.database.list_datasets_with_meta")
+def test_retrieve_local_set_list_from_db(mock_list_meta):
+    """Verify that the function reads from DB and filters by provided codes."""
+    mock_list_meta.return_value = MOCKED_DB_META
 
     file_list, error_list = retrieve_local_set_list(MOCKED_SET_CODES)
 
     assert not error_list
+    # Only MH3 and OTJ should be returned (DMU is filtered out)
     assert file_list == MOCKED_DATASETS_LIST_VALID

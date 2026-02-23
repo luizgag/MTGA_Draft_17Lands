@@ -3,7 +3,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 import tkinter
@@ -406,20 +406,19 @@ def _fetch_17lands_archetype_games(set_code: str, event_type: str, start_date: s
     return archetype_games
 
 
-def _load_dataset_totals(set_code: str) -> Dict[str, Dict[str, int]]:
-    result = {
+def _load_dataset_totals(set_code: str, db_path: Optional[str] = None) -> Dict[str, Dict[str, int]]:
+    """Load card game-count totals from the SQLite database."""
+    from src import database
+    result: Dict[str, Any] = {
         "cards": {},
         "meta": {
             "game_count": 0,
         },
     }
 
-    file_path = os.path.join(constants.SETS_FOLDER, f"{set_code}_{constants.SET_FILE_SUFFIX}")
-    if not os.path.exists(file_path):
+    data = database.load_dataset(set_code, db_path)
+    if data is None:
         return result
-
-    with open(file_path, "r", encoding="utf8", errors="replace") as data_file:
-        data = json.load(data_file)
 
     result["meta"]["game_count"] = int(data.get("meta", {}).get("game_count", 0) or 0)
 
@@ -485,6 +484,7 @@ def analyze_trophy_decks(set_code: str, set_name: str, format_name: str, start_d
     dataset_totals = _load_dataset_totals(set_code)
     archetype_games = _fetch_17lands_archetype_games(set_code, format_17lands, analysis_start_date, analysis_end_date)
 
+
     archetype_rows = []
     for archetype, trophy_wins in archetype_trophy_wins.items():
         archetype_rows.append(
@@ -521,12 +521,12 @@ def analyze_trophy_decks(set_code: str, set_name: str, format_name: str, start_d
         cards=card_rows,
     )
 
-    output_file = os.path.join(
-        TROPHY_FOLDER,
-        f"Trophy_{set_code}_{format_data['17lands']}.json",
-    )
-    with open(output_file, "w", encoding="utf8", errors="replace") as analysis_file:
-        json.dump(result.model_dump(), analysis_file, ensure_ascii=False, indent=4)
+    # Persist to DB
+    try:
+        from src import database
+        database.save_trophy_analysis(set_code, format_name, result.model_dump())
+    except Exception as error:
+        logger.error("Failed to save trophy analysis to DB: %s", error)
 
     return result
 

@@ -6,6 +6,7 @@ from pydantic import Field
 from unittest.mock import patch
 from src.log_scanner import ArenaScanner, Source
 from src.limited_sets import SetDictionary, SetInfo, SpecialEvent
+import src.constants as constants
 
 TEST_LOG_DIRECTORY = os.path.join(os.getcwd(), "tests")
 TEST_LOG_FILE_LOCATION = os.path.join(os.getcwd(), "tests", "Player.log")
@@ -1198,3 +1199,31 @@ def test_otj_premier_p1p1_ocr_disabled(mock_screenshot, mock_ocr, function_scann
     # Verify that the OCR method was not called
     assert mock_ocr.call_count == 0
     mock_screenshot.return_value = 0
+
+
+CONSTRUCTED_EVENT_ENTRY = r'[UnityCrossThreadLogger]==> Event_Join {"id":"constructed-id-0001","request":"{\"EventName\":\"Constructed_Standard_2024\",\"EntryCurrencyType\":\"Gold\",\"EntryCurrencyPaid\":0,\"CustomTokenId\":null}"}'
+
+
+def test_draft_start_search_returns_true_after_non_draft_event(function_scanner):
+    """
+    Regression test: draft_start_search() must return True when the log contains a valid
+    draft Event_Join followed by a non-draft (Constructed) Event_Join.
+
+    Previously, update was overwritten to False for the non-draft event, causing
+    draft_start_search() to return False even though a valid draft had been detected.
+    """
+    with open(TEST_LOG_FILE_LOCATION, 'a', encoding="utf-8", errors="replace") as log_file:
+        # Valid Premier Draft event for OTJ
+        log_file.write(f"{OTJ_EVENT_ENTRY}\n")
+        # Subsequent non-draft Constructed event
+        log_file.write(f"{CONSTRUCTED_EVENT_ENTRY}\n")
+
+    result = function_scanner.draft_start_search()
+
+    assert result is True, "draft_start_search() should return True when a valid draft preceded a non-draft event"
+    assert function_scanner.draft_type == constants.LIMITED_TYPE_DRAFT_PREMIER_V1, (
+        f"draft_type should be LIMITED_TYPE_DRAFT_PREMIER_V1, got {function_scanner.draft_type}"
+    )
+    assert function_scanner.draft_sets == ["OTJ"], (
+        f"draft_sets should be ['OTJ'], got {function_scanner.draft_sets}"
+    )

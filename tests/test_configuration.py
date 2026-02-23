@@ -16,6 +16,11 @@ from src.configuration import (
 
 
 @pytest.fixture
+def db_path(tmp_path):
+    return str(tmp_path / "test_config.db")
+
+
+@pytest.fixture
 def example_configuration():
     # Create an example Configuration object for testing
     config = Configuration()
@@ -25,16 +30,12 @@ def example_configuration():
     return config
 
 
-def test_read_configuration_existing_file(tmp_path, example_configuration):
-    # Create a temporary file for testing
-    file_location = tmp_path / "config.json"
+def test_read_configuration_existing(db_path, example_configuration):
+    # Write the example configuration to the DB
+    write_configuration(example_configuration, db_path)
 
-    # Write the example configuration to the temporary file
-    with open(file_location, "w") as f:
-        json.dump(example_configuration.model_dump(), f)
-
-    # Test reading the configuration from an existing file
-    config, success = read_configuration(file_location)
+    # Test reading the configuration from the DB
+    config, success = read_configuration(db_path)
 
     # Assert that the configuration was successfully read
     assert success is True
@@ -43,62 +44,61 @@ def test_read_configuration_existing_file(tmp_path, example_configuration):
     assert config == example_configuration
 
 
-def test_read_configuration_nonexistent_file(tmp_path):
-    # Create a temporary file location for testing (nonexistent file)
-    file_location = tmp_path / "nonexistent.json"
+def test_read_configuration_empty_db(db_path):
+    """Reading from a DB with no config row returns defaults and success=False."""
+    from src.database import init_db
+    init_db(db_path)
 
-    # Test reading the configuration from a nonexistent file
-    config, success = read_configuration(file_location)
+    config, success = read_configuration(db_path)
 
-    # Assert that the configuration was not successfully read
+    # Assert that the configuration was not successfully read (no row)
     assert success is False
 
-    # Assert that the returned configuration is a new Configuration object
+    # Assert that the returned configuration is a default Configuration object
     assert isinstance(config, Configuration)
     assert config == Configuration()
 
 
-def test_write_configuration(tmp_path, example_configuration):
-    # Create a temporary file for testing
-    file_location = tmp_path / "config.json"
+def test_read_configuration_missing_db(tmp_path):
+    """Reading from a non-existent DB returns defaults and success=False."""
+    missing = str(tmp_path / "nonexistent.db")
 
+    config, success = read_configuration(missing)
+
+    assert success is False
+    assert isinstance(config, Configuration)
+    assert config == Configuration()
+
+
+def test_write_configuration(db_path, example_configuration):
     # Test writing the configuration
-    success = write_configuration(example_configuration, file_location)
+    success = write_configuration(example_configuration, db_path)
 
     # Assert that the configuration was successfully written
     assert success is True
 
-    # Read the written configuration file
-    with open(file_location, "r") as f:
-        written_config = json.load(f)
-
-    # Assert that the written configuration matches the example configuration
-    assert written_config == example_configuration.model_dump()
+    # Verify round-trip
+    config, read_success = read_configuration(db_path)
+    assert read_success is True
+    assert config == example_configuration
 
 
-def test_reset_configuration(tmp_path, example_configuration):
-    # Create a temporary file for testing
-    file_location = tmp_path / "config.json"
-
-    # Write the example configuration to the temporary file
-    with open(file_location, "w") as f:
-        json.dump(example_configuration.model_dump(), f)
+def test_reset_configuration(db_path, example_configuration):
+    # Write the example configuration to the DB
+    write_configuration(example_configuration, db_path)
 
     # Test resetting the configuration
-    success = reset_configuration(file_location)
+    success = reset_configuration(db_path)
 
     # Assert that the configuration was successfully reset
     assert success is True
 
-    # Read the reset configuration file
-    with open(file_location, "r") as f:
-        reset_config = json.load(f)
-
-    # Create a new empty Configuration object
-    empty_config = Configuration()
+    # Read the reset configuration
+    reset_config, read_success = read_configuration(db_path)
 
     # Assert that the reset configuration matches the empty Configuration object
-    assert reset_config == empty_config.model_dump()
+    assert read_success is True
+    assert reset_config == Configuration()
 
 
 def test_features_archetype_openness_default():
@@ -113,39 +113,37 @@ def test_set_sources_default():
     assert settings.set_sources == {}
 
 
-def test_set_sources_backward_compat(tmp_path):
-    """Old config.json missing set_sources loads fine (empty dict)."""
+def test_set_sources_backward_compat(db_path):
+    """Config missing set_sources loads fine (empty dict)."""
     old_config = Configuration()
     config_dict = old_config.model_dump()
     del config_dict["settings"]["set_sources"]
 
-    file_location = tmp_path / "config.json"
-    with open(file_location, "w") as f:
-        json.dump(config_dict, f)
+    from src.database import save_configuration
+    save_configuration(config_dict, db_path)
 
-    config, success = read_configuration(str(file_location))
+    config, success = read_configuration(db_path)
     assert success is True
     assert config.settings.set_sources == {}
 
 
-def test_old_dataset_sources_ignored(tmp_path):
-    """Old config.json with dataset_sources key doesn't crash."""
+def test_old_dataset_sources_ignored(db_path):
+    """Config with dataset_sources key doesn't crash."""
     config_dict = Configuration().model_dump()
     config_dict["settings"]["dataset_sources"] = [
         {"format": "PremierDraft", "user_group": "All", "weight": 1.0}
     ]
 
-    file_location = tmp_path / "config.json"
-    with open(file_location, "w") as f:
-        json.dump(config_dict, f)
+    from src.database import save_configuration
+    save_configuration(config_dict, db_path)
 
-    config, success = read_configuration(str(file_location))
+    config, success = read_configuration(db_path)
     assert success is True
     assert config.settings.set_sources == {}
 
 
-def test_old_config_with_date_fields_in_sources(tmp_path):
-    """Old config.json with start_date/end_date in DatasetSource loads without error."""
+def test_old_config_with_date_fields_in_sources(db_path):
+    """Config with start_date/end_date in DatasetSource loads without error."""
     config_dict = Configuration().model_dump()
     config_dict["settings"]["set_sources"] = {
         "ECL": [
@@ -153,11 +151,10 @@ def test_old_config_with_date_fields_in_sources(tmp_path):
         ]
     }
 
-    file_location = tmp_path / "config.json"
-    with open(file_location, "w") as f:
-        json.dump(config_dict, f)
+    from src.database import save_configuration
+    save_configuration(config_dict, db_path)
 
-    config, success = read_configuration(str(file_location))
+    config, success = read_configuration(db_path)
     assert success is True
     assert len(config.settings.set_sources["ECL"]) == 1
     assert config.settings.set_sources["ECL"][0].format == "PremierDraft"
@@ -171,7 +168,7 @@ def test_datasetsource_default_enabled():
     assert source.enabled is True
 
 
-def test_datasetsource_enabled_roundtrip(tmp_path):
+def test_datasetsource_enabled_roundtrip(db_path):
     """enabled field survives write/read cycle."""
     config = Configuration()
     config.settings.set_sources = {
@@ -180,17 +177,16 @@ def test_datasetsource_enabled_roundtrip(tmp_path):
             DatasetSource(format="TradDraft", user_group="Top", enabled=False),
         ],
     }
-    file_location = str(tmp_path / "config.json")
-    write_configuration(config, file_location)
-    loaded, success = read_configuration(file_location)
+    write_configuration(config, db_path)
+    loaded, success = read_configuration(db_path)
 
     assert success is True
     assert loaded.settings.set_sources["ECL"][0].enabled is True
     assert loaded.settings.set_sources["ECL"][1].enabled is False
 
 
-def test_datasetsource_weight_migrates_to_enabled(tmp_path):
-    """Old config.json with weight field is migrated: weight>0 → enabled=True, weight=0 → enabled=False."""
+def test_datasetsource_weight_migrates_to_enabled(db_path):
+    """Old config with weight field is migrated: weight>0 → enabled=True, weight=0 → enabled=False."""
     config_dict = Configuration().model_dump()
     config_dict["settings"]["set_sources"] = {
         "ECL": [
@@ -198,12 +194,23 @@ def test_datasetsource_weight_migrates_to_enabled(tmp_path):
             {"format": "TradDraft", "user_group": "Top", "weight": 0.0},
         ]
     }
-    file_location = str(tmp_path / "config.json")
-    with open(file_location, "w") as f:
-        json.dump(config_dict, f)
 
-    config, success = read_configuration(file_location)
+    from src.database import save_configuration
+    save_configuration(config_dict, db_path)
+
+    config, success = read_configuration(db_path)
 
     assert success is True
     assert config.settings.set_sources["ECL"][0].enabled is True
     assert config.settings.set_sources["ECL"][1].enabled is False
+
+
+def test_import_configuration_does_not_create_db(tmp_path, monkeypatch):
+    """Importing configuration module must NOT create a DB file as a side effect."""
+    monkeypatch.chdir(tmp_path)
+    import importlib
+    import src.configuration as cfg_mod
+    importlib.reload(cfg_mod)
+    assert not (tmp_path / "mtga_draft.db").exists(), (
+        "configuration module created mtga_draft.db as a side effect"
+    )

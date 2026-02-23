@@ -28,17 +28,37 @@ if not os.path.exists(constants.TEMP_FOLDER):
 
 
 def delete_old_set_files(set_code: str):
-    """Delete old 4-segment dataset files for a set. Leaves new 2-segment files."""
+    """Delete old 4-segment dataset files for a set (filesystem + DB).
+
+    Removes any 4-segment JSON files still on disk and also removes the
+    corresponding DB entry (if any) so the DB stays consistent.
+    """
+    import src.database as database
     upper_code = set_code.upper()
-    for filename in os.listdir(constants.SETS_FOLDER):
-        segments = filename.split("_")
-        if len(segments) == 4 and segments[0].upper() == upper_code:
-            file_path = os.path.join(constants.SETS_FOLDER, filename)
-            try:
-                os.remove(file_path)
-                logger.info("Deleted old dataset file: %s", filename)
-            except OSError as error:
-                logger.error("Failed to delete %s: %s", filename, error)
+
+    # Remove filesystem files
+    if os.path.exists(constants.SETS_FOLDER):
+        for filename in os.listdir(constants.SETS_FOLDER):
+            segments = filename.split("_")
+            if len(segments) == 4 and segments[0].upper() == upper_code:
+                file_path = os.path.join(constants.SETS_FOLDER, filename)
+                try:
+                    os.remove(file_path)
+                    logger.info("Deleted old dataset file: %s", filename)
+                except OSError as error:
+                    logger.error("Failed to delete %s: %s", filename, error)
+
+    # Remove old entries from the DB that used 4-segment style set codes
+    # (e.g. "OTJ_PremierDraft_All" if they were ever stored that way)
+    try:
+        known_codes = database.list_datasets()
+        for code in known_codes:
+            parts = code.split("_")
+            if len(parts) >= 2 and parts[0].upper() == upper_code:
+                database.delete_dataset(code)
+                logger.info("Deleted old DB dataset entry: %s", code)
+    except Exception as error:
+        logger.error("Failed to clean DB for %s: %s", set_code, error)
 
 
 def merge_datasets(datasets: List[dict]) -> dict:
@@ -1174,23 +1194,13 @@ class FileExtractor:
 
         return result
 
-    def export_card_data(self):
-        '''Build the file for the set data'''
+    def export_card_data(self, db_path: str = None):
+        '''Build the set data and persist it to the SQLite database.'''
+        import src.database as database
         result = True
         try:
-            # Reformat the 17Lands set string so "Cube - Powered" becomes "CUBE-POWERED" in the dataset filename
-            output_file = "_".join((clean_string(self.selected_sets.seventeenlands[0]), constants.SET_FILE_SUFFIX))
-            location = os.path.join(constants.SETS_FOLDER, output_file)
-
-            with open(location, 'w', encoding="utf-8", errors="replace") as file:
-                json.dump(self.combined_data, file)
-
-            # Verify that the file was written
-            write_data = check_file_integrity(location)
-
-            if write_data[0] != Result.VALID:
-                result = False
-
+            set_code = clean_string(self.selected_sets.seventeenlands[0])
+            database.save_dataset(set_code, self.combined_data, db_path)
         except Exception as error:
             logger.error(error)
             result = False

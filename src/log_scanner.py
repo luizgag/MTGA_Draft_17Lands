@@ -66,6 +66,7 @@ class ArenaScanner:
         self.data_source = "None"
         self.event_string = ""
         self.draft_label = ""
+        self.hindsight_mode = False
 
     def set_arena_file(self, filename):
         '''Public function that's used for storing the location of the Player.log file'''
@@ -150,11 +151,15 @@ class ArenaScanner:
                     self.search_offset = offset
                     start_offset = detect_string(line, constants.DRAFT_START_STRINGS)
                     if start_offset != -1:
-                        self.draft_start_offset = offset
                         entry_string = line[start_offset:]
                         event_data = process_json(entry_string)
-                        update, event_type, draft_id = self.__check_event(event_data)
-                        event_line = line
+                        event_updated, current_type, current_id = self.__check_event(event_data)
+                        if event_updated:
+                            update = True
+                            event_type = current_type
+                            draft_id = current_id
+                            event_line = line
+                            self.draft_start_offset = offset
             if update:
                 self.__new_log(self.draft_sets[0], event_type, draft_id)
                 self.draft_log.info(event_line)

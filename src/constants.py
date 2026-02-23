@@ -305,6 +305,7 @@ LOCAL_CARDS_KEY_PRIMARY = "isprimarycard"
 SETS_FOLDER = os.path.join(os.getcwd(), "Sets")
 ARCHETYPES_FOLDER = os.path.join(os.getcwd(), "Archetypes")
 SET_FILE_SUFFIX = "Data.json"
+DB_FILE = os.path.join(os.getcwd(), "mtga_draft.db")
 
 CARD_RATINGS_BACKOFF_DELAY_SECONDS = 30
 CARD_RATINGS_INTER_DELAY_SECONDS = 1

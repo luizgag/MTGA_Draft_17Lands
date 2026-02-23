@@ -1,10 +1,11 @@
-"""This module encompasses functions for reading from, writing to, and resetting the configuration file"""
+"""This module encompasses functions for reading from, writing to, and resetting the configuration."""
 import json
 import os
 from pydantic import BaseModel, field_validator, Field, model_validator
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from src import constants
 from src.logger import create_logger
+import src.database as database
 
 CONFIG_FILE = os.path.join(os.getcwd(), "config.json")
 
@@ -159,50 +160,45 @@ class Configuration(BaseModel):
     card_data: CardData = Field(default_factory=lambda: CardData())
 
 
-def read_configuration(file_location: str = CONFIG_FILE) -> Tuple[Configuration, bool]:
-    '''function is responsible for reading the contents of file and storing it as a Configuration object'''
+def read_configuration(db_path: Optional[str] = None) -> Tuple[Configuration, bool]:
+    '''Read Configuration from the SQLite database. Returns defaults if no row exists.'''
     config_object = Configuration()
     success = False
 
     try:
-        with open(file_location, 'r', encoding="utf8", errors="replace") as data:
-            config_data = json.loads(data.read())
-
-        config_object = Configuration.model_validate(config_data)
-        success = True
-    except (FileNotFoundError, json.JSONDecodeError) as error:
+        config_data = database.load_configuration(db_path)
+        if config_data is not None:
+            config_object = Configuration.model_validate(config_data)
+            success = True
+    except Exception as error:
         logger.error(error)
 
     return config_object, success
 
 
-def write_configuration(config_object: Configuration, file_location: str = CONFIG_FILE) -> bool:
-    '''function is responsible for writing the contents of a Configuration object to a specified file location'''
+def write_configuration(config_object: Configuration, db_path: Optional[str] = None) -> bool:
+    '''Write a Configuration object to the SQLite database.'''
     success = False
 
     try:
-        with open(file_location, 'w', encoding="utf8", errors="replace") as data:
-            json.dump(config_object.model_dump(), data, ensure_ascii=False, indent=4)
+        database.save_configuration(config_object.model_dump(), db_path)
         success = True
-    except (FileNotFoundError, TypeError, OSError) as error:
+    except Exception as error:
         logger.error(error)
 
     return success
 
 
-def reset_configuration(file_location: str = CONFIG_FILE) -> bool:
-    '''function is responsible for reseting the contents of a Configuration object to a specified file location'''
+def reset_configuration(db_path: Optional[str] = None) -> bool:
+    '''Reset configuration to defaults in the SQLite database.'''
     config_object = Configuration()
     success = False
     try:
-        with open(file_location, 'w', encoding="utf8", errors="replace") as data:
-            json.dump(config_object.model_dump(), data, ensure_ascii=False, indent=4)
+        database.save_configuration(config_object.model_dump(), db_path)
         success = True
-    except (FileNotFoundError, TypeError, OSError) as error:
+    except Exception as error:
         logger.error(error)
 
     return success
 
 
-if not os.path.exists(CONFIG_FILE):
-    reset_configuration(CONFIG_FILE)

@@ -15,6 +15,9 @@ from os import stat, path
 from pynput.keyboard import Listener, KeyCode
 from PIL import Image, ImageTk, ImageFont
 from src.configuration import read_configuration, write_configuration, reset_configuration, DatasetSource
+from src import constants as _constants_for_db
+from src.constants import DB_FILE as _DB_FILE
+import src.database as _db_mod
 from src.limited_sets import LimitedSets, START_DATE_DEFAULT
 from src.log_scanner import ArenaScanner, Source
 from src.mtgo_scanner import MtgoScanner
@@ -181,6 +184,20 @@ def toggle_widget(input_widget, enable):
 def url_callback(event):
     webbrowser.open_new(event.widget.cget("text"))
 
+
+def _needs_migration(db_file: str) -> bool:
+    """Return True if the JSON→SQLite migration should run."""
+    if not os.path.exists(db_file):
+        return True
+    # DB was pre-created empty by the old auto-init bug — migrate if JSON sets exist
+    sets_folder = os.path.join(os.getcwd(), "Sets")
+    if not _db_mod.list_datasets() and os.path.exists(sets_folder):
+        two_seg = [f for f in os.listdir(sets_folder)
+                   if f.endswith(".json") and len(f.split("_")) == 2]
+        return bool(two_seg)
+    return False
+
+
 class Overlay(ScaledWindow):
     '''Class that handles all of the UI widgets'''
 
@@ -188,6 +205,15 @@ class Overlay(ScaledWindow):
         super().__init__()
         self.root = tkinter.Tk()
         self.root.title(f"Version {APPLICATION_VERSION:2.2f}")
+
+        # Run one-time migration if needed (fresh install, or DB pre-created empty by old bug)
+        if _needs_migration(_DB_FILE):
+            try:
+                from src.migration import migrate_json_to_sqlite
+                migrate_json_to_sqlite()
+            except Exception as _mig_err:
+                create_logger().warning("Migration failed: %s", _mig_err)
+
         self.configuration, _ = read_configuration()
         self.root.resizable(True, False)
         self.last_download = 0

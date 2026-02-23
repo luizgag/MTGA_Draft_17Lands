@@ -27,11 +27,12 @@ VALID_CONFIG = {
 
 
 def test_archetype_config_round_trip(tmp_path):
-    """Save and reload archetype config, verify equality."""
-    file_path = tmp_path / "OTJ_archetypes.json"
+    """Save and reload archetype config via DB, verify equality."""
+    db_path = str(tmp_path / "test.db")
+    file_path = str(tmp_path / "OTJ_archetypes.json")
     config = ArchetypeConfig.model_validate(VALID_CONFIG)
-    save_archetype_config(config, str(file_path))
-    loaded = load_archetype_config(str(file_path))
+    save_archetype_config(config, file_path, db_path=db_path)
+    loaded = load_archetype_config(file_path, db_path=db_path)
     assert loaded is not None
     assert loaded.set_code == "OTJ"
     assert loaded.archetypes[0].name == "Golgari"
@@ -39,16 +40,18 @@ def test_archetype_config_round_trip(tmp_path):
 
 
 def test_load_missing_file_returns_none(tmp_path):
-    """Missing file returns None gracefully."""
-    loaded = load_archetype_config(str(tmp_path / "nonexistent.json"))
+    """Missing set_code in DB returns None gracefully."""
+    db_path = str(tmp_path / "test.db")
+    loaded = load_archetype_config(str(tmp_path / "NONEXISTENT_archetypes.json"), db_path=db_path)
     assert loaded is None
 
 
 def test_load_malformed_json_returns_none(tmp_path):
-    """Malformed JSON returns None gracefully."""
-    bad_file = tmp_path / "bad.json"
-    bad_file.write_text("{invalid json")
-    loaded = load_archetype_config(str(bad_file))
+    """set_code absent from DB returns None (replaces old malformed-JSON test)."""
+    db_path = str(tmp_path / "test.db")
+    from src.database import init_db
+    init_db(db_path)
+    loaded = load_archetype_config(str(tmp_path / "BAD_archetypes.json"), db_path=db_path)
     assert loaded is None
 
 

@@ -500,8 +500,122 @@ def test_get_card_archetypes_by_field_fail_empty(otj_dataset):
     
 def test_get_card_archetypes_by_field_pass(otj_dataset):
     """
-    Verify that a list of archetypes is returned 
+    Verify that a list of archetypes is returned
     """
     archetype_list = otj_dataset.get_card_archetypes_by_field("Hardbristle Bandit", DATA_FIELD_GIHWR)
     assert archetype_list == OTJ_HARDBRISTLE_BANDIT_ARCHETYPE_DATA
-    
+
+
+# ---------------------------------------------------------------------------
+# Tests for Dataset.open_set() — SQLite-backed loading
+# ---------------------------------------------------------------------------
+
+SIMPLE_DATASET = {
+    "meta": {
+        "collection_date": "2024-01-01",
+        "start_date": "2024-01-01",
+        "end_date": "2024-06-01",
+        "version": 2.0,
+        "game_count": 100,
+    },
+    "color_ratings": {"WU": 54.0},
+    "card_ratings": {
+        "99001": {
+            "name": "DB Test Card",
+            "colors": ["W"],
+            "types": ["Creature"],
+            "rarity": "common",
+            "cmc": 2,
+            "mana_cost": "{1}{W}",
+            "image": [],
+            "isprimarycard": 1,
+            "linkedfacetype": 0,
+            "deck_colors": {
+                "All Decks": {
+                    "gihwr": 55.0, "ohwr": 54.0, "gpwr": 53.0,
+                    "gnswr": 50.0, "gdwr": 51.0, "alsa": 3.2,
+                    "ata": 2.8, "iwd": 2.0,
+                    "ngp": 100, "ngoh": 80, "gih": 90, "ngnd": 10, "ngd": 70,
+                },
+            },
+        },
+    },
+}
+
+
+def test_open_set_loads_from_db(tmp_path):
+    """open_set() loads dataset from SQLite DB."""
+    from src.database import save_dataset
+    db_path = str(tmp_path / "test.db")
+    save_dataset("TST", SIMPLE_DATASET, db_path)
+
+    dataset = Dataset()
+    result = dataset.open_set("TST", db_path=db_path)
+    assert result == Result.VALID
+    assert dataset._dataset is not None
+
+
+def test_open_set_missing_set_code(tmp_path):
+    """open_set() returns ERROR_MISSING_FILE if set_code not in DB."""
+    from src.database import init_db
+    db_path = str(tmp_path / "test.db")
+    init_db(db_path)
+
+    dataset = Dataset()
+    result = dataset.open_set("NONEXISTENT", db_path=db_path)
+    assert result == Result.ERROR_MISSING_FILE
+
+
+def test_open_set_get_data_by_id(tmp_path):
+    """After open_set(), get_data_by_id returns correct card data."""
+    from src.database import save_dataset
+    db_path = str(tmp_path / "test.db")
+    save_dataset("TST", SIMPLE_DATASET, db_path)
+
+    dataset = Dataset()
+    dataset.open_set("TST", db_path=db_path)
+    cards = dataset.get_data_by_id(["99001"])
+    assert len(cards) == 1
+    assert cards[0]["name"] == "DB Test Card"
+    assert cards[0]["cmc"] == 2
+
+
+def test_open_set_get_data_by_name(tmp_path):
+    """After open_set(), get_data_by_name returns correct card data."""
+    from src.database import save_dataset
+    db_path = str(tmp_path / "test.db")
+    save_dataset("TST", SIMPLE_DATASET, db_path)
+
+    dataset = Dataset()
+    dataset.open_set("TST", db_path=db_path)
+    cards = dataset.get_data_by_name(["DB Test Card"])
+    assert len(cards) == 1
+    assert cards[0]["cmc"] == 2
+
+
+def test_open_file_falls_back_to_json(tmp_path):
+    """open_file() falls back to JSON when set_code not in DB."""
+    # DB is empty — should fall back to reading the actual JSON snapshot
+    db_path = str(tmp_path / "test.db")
+
+    dataset = Dataset()
+    # Use the existing OTJ snapshot file; DB has no OTJ entry → falls back to file
+    result = dataset.open_file(OTJ_PREMIER_SNAPSHOT, db_path=db_path)
+    assert result == Result.VALID
+    assert dataset._dataset is not None
+
+
+def test_open_file_prefers_db_when_available(tmp_path):
+    """open_file() uses DB entry when set_code is found there."""
+    from src.database import save_dataset
+    db_path = str(tmp_path / "test.db")
+    save_dataset("TST", SIMPLE_DATASET, db_path)
+
+    # Create a synthetic file path that maps to set_code="TST"
+    dataset = Dataset()
+    result = dataset.open_file(str(tmp_path / "TST_Data.json"), db_path=db_path)
+    assert result == Result.VALID
+    # Should have loaded from DB, not the (nonexistent) file
+    cards = dataset.get_data_by_name(["DB Test Card"])
+    assert len(cards) == 1
+

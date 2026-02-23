@@ -3,7 +3,7 @@
 import json
 import os
 import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 from src.logger import create_logger
 
@@ -47,28 +47,47 @@ class ArchetypeConfig(BaseModel):
     archetypes: List[Archetype] = Field(default_factory=list)
 
 
-def load_archetype_config(file_path: str) -> Optional[ArchetypeConfig]:
-    """Load archetype config from JSON file. Returns None if file missing or invalid."""
+def _set_code_from_path(file_path: str) -> str:
+    """Extract set_code from an archetype file path.
+
+    "Archetypes/OTJ_archetypes.json" → "OTJ"
+    Falls back to the full basename if no underscore is found.
+    """
+    basename = os.path.basename(file_path)
+    # Strip extension
+    name = basename.rsplit(".", 1)[0] if "." in basename else basename
+    return name.split("_")[0].upper()
+
+
+def load_archetype_config(file_path: str, db_path: Optional[str] = None) -> Optional[ArchetypeConfig]:
+    """Load archetype config from the SQLite database.
+
+    set_code is derived from file_path for backward compatibility.
+    Returns None if the config is not found.
+    """
+    import src.database as database
     try:
-        with open(file_path, "r", encoding="utf8", errors="replace") as f:
-            data = json.loads(f.read())
+        set_code = _set_code_from_path(file_path)
+        data = database.load_archetype_config(set_code, db_path)
+        if data is None:
+            logger.info("No archetype config found for %s in DB", set_code)
+            return None
         return ArchetypeConfig.model_validate(data)
-    except FileNotFoundError:
-        logger.info("No archetype config found at %s, will use defaults", file_path)
-        return None
-    except (json.JSONDecodeError, Exception) as error:
+    except Exception as error:
         logger.error("Failed to load archetype config: %s", error)
         return None
 
 
-def save_archetype_config(config: ArchetypeConfig, file_path: str) -> bool:
-    """Save archetype config to JSON file."""
+def save_archetype_config(config: ArchetypeConfig, file_path: str = None, db_path: Optional[str] = None) -> bool:
+    """Save archetype config to the SQLite database.
+
+    set_code is taken from config.set_code; file_path is kept for call-site compatibility.
+    """
+    import src.database as database
     try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, "w", encoding="utf8", errors="replace") as f:
-            json.dump(config.model_dump(), f, ensure_ascii=False, indent=4)
+        database.save_archetype_config(config.set_code, config.model_dump(), db_path)
         return True
-    except (OSError, TypeError) as error:
+    except Exception as error:
         logger.error("Failed to save archetype config: %s", error)
         return False
 

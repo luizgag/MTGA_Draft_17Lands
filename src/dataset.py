@@ -1,6 +1,7 @@
+import os
 from src.utils import Result, check_file_integrity
 from src.file_extractor import initialize_card_data
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 from src.constants import (
     DATA_FIELD_NAME,
     DATA_FIELD_MANA_COST,
@@ -12,34 +13,60 @@ from src.constants import (
     WIN_RATE_OPTIONS,
     WIN_RATE_FIELDS_DICT
 )
+import src.database as database
 
 class Dataset:
     def __init__(self, retrieve_unknown: bool = False):
         self._dataset = None
         self._retrieve_unknown = retrieve_unknown
-        
+
     def clear(self) -> None:
         """
         Clear the stored dataset
         """
         self._dataset = None
-        
-    def open_file(self, file_location: str) -> None:
-        """
-        Open the the dataset file
+
+    def open_set(self, set_code: str, db_path: Optional[str] = None) -> Result:
+        """Load a dataset from the SQLite database by set_code."""
+        if not set_code:
+            return Result.ERROR_MISSING_FILE
+
+        data = database.load_dataset(set_code, db_path)
+        if data is None:
+            return Result.ERROR_MISSING_FILE
+
+        self._dataset = data
+        return Result.VALID
+
+    def open_file(self, file_location: str, db_path: Optional[str] = None) -> Result:
+        """Open a dataset file or load from DB.
+
+        Derives the set_code from the filename and tries the DB first.
+        Falls back to direct JSON file reading for backward compatibility.
         """
         result = Result.ERROR_MISSING_FILE
-        
+
         if not file_location:
             return result
-            
+
+        # Derive set_code from filename: "OTJ_Data.json" → "OTJ",
+        # "OTJ_PremierDraft_Data_2024_5_3.json" → "OTJ"
+        basename = os.path.basename(file_location)
+        set_code = basename.split("_")[0].upper() if "_" in basename else basename
+
+        # Try DB first
+        db_result = self.open_set(set_code, db_path)
+        if db_result == Result.VALID:
+            return db_result
+
+        # Fall back to JSON file for backward compatibility
         result, json_data = check_file_integrity(file_location)
-        
+
         if result != Result.VALID:
             return result
-            
+
         self._dataset = json_data
-        
+
         return result
 
     def get_data_by_id(self, id_list: List[str]) -> List[Dict]:
