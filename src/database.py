@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS cards (
     colors TEXT DEFAULT '[]',
     types TEXT DEFAULT '[]',
     image TEXT DEFAULT '[]',
+    price REAL DEFAULT 0.0,
     PRIMARY KEY (arena_id, set_code)
 );
 
@@ -92,11 +93,19 @@ def _resolve_path(db_path: Optional[str] = None) -> str:
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """Creates schema if tables don't exist; sets WAL mode."""
+    """Creates schema if tables don't exist; sets WAL mode.
+
+    Also runs lightweight migrations for columns added after initial release.
+    """
     path = _resolve_path(db_path)
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        # Migration: add price column to cards if missing (pre-existing DBs)
+        try:
+            conn.execute("ALTER TABLE cards ADD COLUMN price REAL DEFAULT 0.0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
 
 @contextmanager
@@ -160,8 +169,8 @@ def save_dataset(set_code: str, dataset_dict: dict, db_path: Optional[str] = Non
             conn.execute(
                 """INSERT INTO cards
                        (arena_id, set_code, name, cmc, mana_cost, isprimarycard,
-                        linkedfacetype, rarity, colors, types, image)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        linkedfacetype, rarity, colors, types, image, price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(arena_id),
                     set_code,
@@ -174,6 +183,7 @@ def save_dataset(set_code: str, dataset_dict: dict, db_path: Optional[str] = Non
                     json.dumps(card.get("colors", [])),
                     json.dumps(card.get("types", [])),
                     json.dumps(card.get("image", [])),
+                    float(card.get("price", 0.0) or 0.0),
                 ),
             )
             for color_filter, stats in card.get("deck_colors", {}).items():
@@ -251,6 +261,7 @@ def load_dataset(set_code: str, db_path: Optional[str] = None) -> Optional[dict]
                 "colors": json.loads(card_row["colors"]),
                 "types": json.loads(card_row["types"]),
                 "image": json.loads(card_row["image"]),
+                "price": card_row["price"] if card_row["price"] is not None else 0.0,
                 "deck_colors": {},
             }
 

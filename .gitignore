@@ -187,3 +187,6 @@ tmpclaude-*-cwd
 
 # Git worktrees
 .worktrees/
+/mtga_draft.db
+/mtga_draft.db-shm
+/mtga_draft.db-wal

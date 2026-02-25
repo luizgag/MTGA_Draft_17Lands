@@ -202,6 +202,125 @@ def test_load_dataset_no_db_returns_none(tmp_path):
     assert load_dataset("OTJ", missing) is None
 
 
+def test_price_field_is_persisted_and_loaded(db_path):
+    """Price injected into card_ratings must survive save/load round-trip."""
+    dataset_with_prices = {
+        "meta": {"collection_date": "", "start_date": "", "end_date": "", "version": 1.0, "game_count": 100},
+        "color_ratings": {},
+        "card_ratings": {
+            "11111": {
+                "name": "Expensive Card",
+                "colors": ["R"], "types": ["Creature"], "rarity": "mythic",
+                "cmc": 5, "mana_cost": "{3}{R}{R}", "image": [],
+                "isprimarycard": 1, "linkedfacetype": 0,
+                "price": 12.5,
+                "deck_colors": {},
+            },
+            "22222": {
+                "name": "Cheap Card",
+                "colors": ["W"], "types": ["Land"], "rarity": "common",
+                "cmc": 0, "mana_cost": "", "image": [],
+                "isprimarycard": 1, "linkedfacetype": 0,
+                "price": 0.05,
+                "deck_colors": {},
+            },
+            "33333": {
+                "name": "No Price Card",
+                "colors": [], "types": ["Instant"], "rarity": "uncommon",
+                "cmc": 2, "mana_cost": "{1}{U}", "image": [],
+                "isprimarycard": 1, "linkedfacetype": 0,
+                "deck_colors": {},
+            },
+        },
+    }
+    save_dataset("OTJ", dataset_with_prices, db_path)
+    result = load_dataset("OTJ", db_path)
+
+    assert result["card_ratings"]["11111"]["price"] == 12.5
+    assert result["card_ratings"]["22222"]["price"] == 0.05
+    assert result["card_ratings"]["33333"].get("price", 0.0) == 0.0
+
+
+def test_price_persisted_on_existing_db_without_price_column(tmp_path):
+    """init_db on a DB created before the price column was added must add the column."""
+    db_path = str(tmp_path / "old.db")
+    # Simulate an old DB: create schema without price column
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS dataset_meta (
+                set_code TEXT PRIMARY KEY,
+                collection_date TEXT DEFAULT '',
+                start_date TEXT DEFAULT '',
+                end_date TEXT DEFAULT '',
+                version REAL DEFAULT 0.0,
+                game_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS color_ratings (
+                set_code TEXT NOT NULL,
+                color_pair TEXT NOT NULL,
+                win_rate REAL NOT NULL,
+                PRIMARY KEY (set_code, color_pair)
+            );
+            CREATE TABLE IF NOT EXISTS cards (
+                arena_id TEXT NOT NULL,
+                set_code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                cmc INTEGER DEFAULT 0,
+                mana_cost TEXT DEFAULT '',
+                isprimarycard INTEGER DEFAULT 0,
+                linkedfacetype INTEGER DEFAULT 0,
+                rarity TEXT DEFAULT '',
+                colors TEXT DEFAULT '[]',
+                types TEXT DEFAULT '[]',
+                image TEXT DEFAULT '[]',
+                PRIMARY KEY (arena_id, set_code)
+            );
+            CREATE TABLE IF NOT EXISTS card_deck_stats (
+                arena_id TEXT NOT NULL,
+                set_code TEXT NOT NULL,
+                color_filter TEXT NOT NULL,
+                alsa REAL DEFAULT 0.0,
+                ata REAL DEFAULT 0.0,
+                iwd REAL DEFAULT 0.0,
+                gihwr REAL DEFAULT 0.0,
+                ohwr REAL DEFAULT 0.0,
+                gpwr REAL DEFAULT 0.0,
+                gnswr REAL DEFAULT 0.0,
+                gdwr REAL DEFAULT 0.0,
+                ngp INTEGER DEFAULT 0,
+                ngoh INTEGER DEFAULT 0,
+                gih INTEGER DEFAULT 0,
+                ngnd INTEGER DEFAULT 0,
+                ngd INTEGER DEFAULT 0,
+                PRIMARY KEY (arena_id, set_code, color_filter)
+            );
+            CREATE TABLE IF NOT EXISTS archetypes_config (set_code TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS trophy_analysis (set_code TEXT NOT NULL, format_name TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (set_code, format_name));
+            CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1), data TEXT NOT NULL);
+        """)
+
+    # init_db should migrate the old schema to add the price column
+    init_db(db_path)
+
+    # Should be able to save and load prices now
+    dataset = {
+        "meta": {"collection_date": "", "start_date": "", "end_date": "", "version": 1.0, "game_count": 50},
+        "color_ratings": {},
+        "card_ratings": {
+            "99999": {
+                "name": "Pricey", "colors": [], "types": [], "rarity": "rare",
+                "cmc": 3, "mana_cost": "{2}{G}", "image": [],
+                "isprimarycard": 1, "linkedfacetype": 0,
+                "price": 7.25,
+                "deck_colors": {},
+            },
+        },
+    }
+    save_dataset("MH3", dataset, db_path)
+    result = load_dataset("MH3", db_path)
+    assert result["card_ratings"]["99999"]["price"] == 7.25
+
+
 def test_save_dataset_overwrites_existing(db_path):
     """Saving a dataset twice replaces the old data."""
     save_dataset("OTJ", SAMPLE_DATASET, db_path)

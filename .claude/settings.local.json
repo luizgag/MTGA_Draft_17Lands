@@ -70,7 +70,8 @@
       "mcp__plugin_playwright_playwright__browser_close",
       "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/tests/test_configuration.py:*)",
       "Bash(sed:*)",
-      "Bash(Xvfb:*)"
+      "Bash(Xvfb:*)",
+      "Bash(head:*)"
     ]
   },
   "prefersReducedMotion": true
