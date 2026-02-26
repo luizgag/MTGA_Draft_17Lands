@@ -2794,6 +2794,23 @@ class Overlay(ScaledWindow):
                 pass
         self._card_data_trace_ids = []
         self.card_data_table = None
+
+        cds = self.configuration.card_data_settings
+        cds.col_rarity = bool(self.card_data_rarity_checkbox_value.get())
+        cds.col_gihwr = bool(self.card_data_gihwr_checkbox_value.get())
+        cds.col_ohwr = bool(self.card_data_ohwr_checkbox_value.get())
+        cds.col_gpwr = bool(self.card_data_gpwr_checkbox_value.get())
+        cds.col_gnswr = bool(self.card_data_gnswr_checkbox_value.get())
+        cds.col_gdwr = bool(self.card_data_gdwr_checkbox_value.get())
+        cds.col_ata = bool(self.card_data_ata_checkbox_value.get())
+        cds.col_alsa = bool(self.card_data_alsa_checkbox_value.get())
+        cds.col_iwd = bool(self.card_data_iwd_checkbox_value.get())
+        cds.col_wheel = bool(self.card_data_wheel_checkbox_value.get())
+        cds.col_colors = bool(self.card_data_colors_checkbox_value.get())
+        cds.col_ngp = bool(self.card_data_ngp_checkbox_value.get())
+        cds.col_gih = bool(self.card_data_gih_checkbox_value.get())
+        write_configuration(self.configuration)
+
         popup.destroy()
 
     def __open_card_data_window(self):

@@ -309,3 +309,46 @@ def test_card_data_intvars_initialized_from_config(mock_scanner):
     assert overlay.card_data_ata_checkbox_value.get() == 0
     assert overlay.card_data_alsa_checkbox_value.get() == 0
     assert overlay.card_data_ohwr_checkbox_value.get() == 1
+
+
+def test_close_card_data_window_saves_column_state():
+    """Closing the Card Data window should persist column checkbox values to configuration."""
+    overlay = Overlay.__new__(Overlay)
+    overlay.configuration = MagicMock()
+    overlay.configuration.card_data_settings = CardDataSettings()
+    overlay._card_data_trace_ids = []
+    overlay.card_data_table = MagicMock()
+
+    import tkinter
+    root = tkinter.Tk()
+    root.withdraw()
+    overlay.card_data_rarity_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_gihwr_checkbox_value = tkinter.IntVar(root, value=1)
+    overlay.card_data_ohwr_checkbox_value = tkinter.IntVar(root, value=1)
+    overlay.card_data_gpwr_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_gnswr_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_gdwr_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_ata_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_alsa_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_iwd_checkbox_value = tkinter.IntVar(root, value=1)
+    overlay.card_data_wheel_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_colors_checkbox_value = tkinter.IntVar(root, value=1)
+    overlay.card_data_ngp_checkbox_value = tkinter.IntVar(root, value=0)
+    overlay.card_data_gih_checkbox_value = tkinter.IntVar(root, value=0)
+
+    popup = MagicMock()
+
+    with patch("src.overlay.write_configuration") as mock_write:
+        overlay._Overlay__close_card_data_window(popup)
+
+    cds = overlay.configuration.card_data_settings
+    assert cds.col_rarity is False
+    assert cds.col_gihwr is True
+    assert cds.col_ohwr is True
+    assert cds.col_ata is False
+    assert cds.col_alsa is False
+    assert cds.col_iwd is True
+    assert cds.col_colors is True
+    mock_write.assert_called_once_with(overlay.configuration)
+
+    root.destroy()
