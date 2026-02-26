@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from src.overlay import start_overlay, Overlay
 from src import constants
+from src.configuration import Configuration, CardDataSettings
 
 @pytest.fixture(autouse=True)
 def catch_log_errors(caplog):
@@ -271,3 +272,40 @@ def test_price_prefix_with_zero_threshold():
 
     assert result_list[0]["results"][0] == "$$$ Bolt"
     assert result_list[1]["results"][0] == "Island"  # price is 0, no prefix
+
+
+def test_card_data_intvars_initialized_from_config(mock_scanner):
+    """Column IntVars should be initialized from saved CardDataSettings."""
+    import argparse
+    saved = CardDataSettings(
+        col_gihwr=False,
+        col_ata=False,
+        col_alsa=False,
+        col_ohwr=True,
+    )
+    config = Configuration()
+    config.card_data_settings = saved
+
+    args = argparse.Namespace(file=None, data=None, step=False)
+
+    with (
+        patch("tkinter.Tk.mainloop", return_value=None),
+        patch("tkinter.messagebox.showinfo", return_value=None),
+        patch("src.overlay.stat", return_value=MagicMock(st_mtime=0)),
+        patch("src.overlay.write_configuration", return_value=True),
+        patch("src.overlay.read_configuration", return_value=(config, True)),
+        patch("src.overlay._needs_migration", return_value=False),
+        patch("src.overlay.LimitedSets.retrieve_limited_sets", return_value=None),
+        patch("src.overlay.AppUpdate.retrieve_file_version", return_value=("", "")),
+        patch("src.overlay.ArenaScanner", return_value=mock_scanner),
+        patch("src.overlay.FileExtractor", return_value=MagicMock()),
+        patch("src.overlay.filter_options", return_value=["All Decks"]),
+        patch("src.overlay.retrieve_arena_directory", return_value="fake_location"),
+        patch("src.overlay.search_arena_log_locations", return_value="fake_location"),
+    ):
+        overlay = Overlay(args)
+
+    assert overlay.card_data_gihwr_checkbox_value.get() == 0
+    assert overlay.card_data_ata_checkbox_value.get() == 0
+    assert overlay.card_data_alsa_checkbox_value.get() == 0
+    assert overlay.card_data_ohwr_checkbox_value.get() == 1
