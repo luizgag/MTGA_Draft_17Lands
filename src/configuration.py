@@ -152,12 +152,30 @@ class CardData(BaseModel):
     database_size: int = 0
 
 
+class CardDataSettings(BaseModel):
+    """Persisted column visibility state for the Card Data window."""
+    col_rarity: bool = True
+    col_gihwr: bool = True
+    col_ohwr: bool = False
+    col_gpwr: bool = False
+    col_gnswr: bool = False
+    col_gdwr: bool = False
+    col_ata: bool = True
+    col_alsa: bool = True
+    col_iwd: bool = False
+    col_wheel: bool = False
+    col_colors: bool = True
+    col_ngp: bool = False
+    col_gih: bool = False
+
+
 class Configuration(BaseModel):
     """This class groups together the data stored in the config.json file"""
     settings: Settings = Field(default_factory=lambda: Settings())
     card_logic: CardLogic = Field(default_factory=lambda: CardLogic())
     features: Features = Field(default_factory=lambda: Features())
     card_data: CardData = Field(default_factory=lambda: CardData())
+    card_data_settings: CardDataSettings = Field(default_factory=lambda: CardDataSettings())
 
 
 def read_configuration(db_path: Optional[str] = None) -> Tuple[Configuration, bool]:

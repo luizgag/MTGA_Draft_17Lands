@@ -9,6 +9,7 @@ from src.configuration import (
     write_configuration,
     reset_configuration,
     Configuration,
+    CardDataSettings,
     DatasetSource,
     Features,
     Settings,
@@ -203,6 +204,29 @@ def test_datasetsource_weight_migrates_to_enabled(db_path):
     assert success is True
     assert config.settings.set_sources["ECL"][0].enabled is True
     assert config.settings.set_sources["ECL"][1].enabled is False
+
+
+def test_card_data_settings_defaults():
+    s = CardDataSettings()
+    assert s.col_rarity is True
+    assert s.col_gihwr is True
+    assert s.col_ohwr is False
+    assert s.col_gpwr is False
+    assert s.col_gnswr is False
+    assert s.col_gdwr is False
+    assert s.col_ata is True
+    assert s.col_alsa is True
+    assert s.col_iwd is False
+    assert s.col_wheel is False
+    assert s.col_colors is True
+    assert s.col_ngp is False
+    assert s.col_gih is False
+
+
+def test_configuration_has_card_data_settings():
+    config = Configuration()
+    assert hasattr(config, "card_data_settings")
+    assert isinstance(config.card_data_settings, CardDataSettings)
 
 
 def test_import_configuration_does_not_create_db(tmp_path, monkeypatch):
