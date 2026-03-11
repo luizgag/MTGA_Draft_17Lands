@@ -4,4 +4,4 @@ Follow TDD and develop tests first.
 Xvfb :99 & export DISPLAY=:99 && .venv/bin/pytest tests/
 
 # Using git
-Don't create new branches. Commit directly on main.
+Don't create new branches or use worktrees. Commit directly on main.
