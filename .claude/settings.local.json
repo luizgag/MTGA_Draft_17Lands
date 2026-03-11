@@ -71,7 +71,12 @@
       "Bash(/mnt/c/Users/Luiz/source/repos/luizgag/MTGA_Draft_17Lands/tests/test_configuration.py:*)",
       "Bash(sed:*)",
       "Bash(Xvfb:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git checkout:*)",
+      "Bash(git check-attr:*)",
+      "Bash(git cat-file:*)",
+      "Bash(git config:*)"
     ]
   },
   "prefersReducedMotion": true
