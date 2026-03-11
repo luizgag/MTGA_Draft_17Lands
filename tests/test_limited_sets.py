@@ -14,30 +14,30 @@ from src.limited_sets import (
 # Test data
 SETS_FILE_LOCATION = os.path.join(os.getcwd(), "Temp", "unit_test_sets.json")
 CHECKED_SETS_COMBINED = {
-    "Through the Omenpaths": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["OM1"],start_date="2025-09-23",set_code="OM1",formats=["PickTwoDraft","PickTwoTradDraft","QuickDraft","Sealed","TradSealed","PremierDraft","TradDraft"]),
-    "Outlaws of Thunder Junction" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["OTJ"],start_date="2024-04-16",set_code="OTJ",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
-    "Wilds of Eldraine" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["WOE"],start_date="2023-09-05",set_code="WOE",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
-    "March of the Machine" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["MOM"],start_date="2023-04-18",set_code="MOM",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
-    "March of the Machine: The Aftermath": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["MAT"],start_date="2023-05-09",set_code="MAT",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
-    "Shadows over Innistrad Remastered": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["SIR"],start_date="2023-03-21",set_code="SIR",formats=["PremierDraft","TradDraft","Sealed","TradSealed","QuickDraft","PickTwoDraft","PickTwoTradDraft"]),
-    "Phyrexia: All Will Be One": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["ONE"],start_date="2023-02-07",set_code="ONE",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]), 
-    "Alchemy: Phyrexia": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["Y23ONE"],start_date="2023-02-28",set_code="Y23ONE",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]), 
-    "The Brothers' War": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["BRO"],start_date="2022-11-15",set_code="BRO",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]), 
-    "Alchemy: The Brothers' War": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["Y23BRO"],start_date="2022-12-13",set_code="Y23BRO",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "Through the Omenpaths": SetInfo(arena=["ALL"],scryfall=["om1"],seventeenlands=["OM1"],start_date="2025-09-23",set_code="OM1",formats=["PickTwoDraft","PickTwoTradDraft","QuickDraft","Sealed","TradSealed","PremierDraft","TradDraft"]),
+    "Outlaws of Thunder Junction" : SetInfo(arena=["ALL"],scryfall=["otj"],seventeenlands=["OTJ"],start_date="2024-04-16",set_code="OTJ",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "Wilds of Eldraine" : SetInfo(arena=["ALL"],scryfall=["woe"],seventeenlands=["WOE"],start_date="2023-09-05",set_code="WOE",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "March of the Machine" : SetInfo(arena=["ALL"],scryfall=["mom"],seventeenlands=["MOM"],start_date="2023-04-18",set_code="MOM",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "March of the Machine: The Aftermath": SetInfo(arena=["ALL"],scryfall=["mat"],seventeenlands=["MAT"],start_date="2023-05-09",set_code="MAT",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "Shadows over Innistrad Remastered": SetInfo(arena=["ALL"],scryfall=["sir"],seventeenlands=["SIR"],start_date="2023-03-21",set_code="SIR",formats=["PremierDraft","TradDraft","Sealed","TradSealed","QuickDraft","PickTwoDraft","PickTwoTradDraft"]),
+    "Phyrexia: All Will Be One": SetInfo(arena=["ALL"],scryfall=["one"],seventeenlands=["ONE"],start_date="2023-02-07",set_code="ONE",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "Alchemy: Phyrexia": SetInfo(arena=["ALL"],scryfall=["yone"],seventeenlands=["Y23ONE"],start_date="2023-02-28",set_code="Y23ONE",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "The Brothers' War": SetInfo(arena=["ALL"],scryfall=["bro"],seventeenlands=["BRO"],start_date="2022-11-15",set_code="BRO",formats=["PremierDraft","TradDraft","QuickDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
+    "Alchemy: The Brothers' War": SetInfo(arena=["ALL"],scryfall=["ybro"],seventeenlands=["Y23BRO"],start_date="2022-12-13",set_code="Y23BRO",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
     "CORE": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["CORE"],start_date="2021-03-26",set_code="CORE",formats=["PremierDraft","QuickDraft","TradDraft","Sealed","TradSealed","PickTwoDraft","PickTwoTradDraft"]),
 }
 
 CHECKED_SETS_SCRYFALL = {
-    "Through the Omenpaths" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["OM1"]),
-    "Outlaws of Thunder Junction" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["OTJ"]),
-    "Wilds of Eldraine" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["WOE"]),
-    "March of the Machine" : SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["MOM"]),
-    "March of the Machine: The Aftermath": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["MAT"]),
-    "Shadows over Innistrad Remastered": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["SIR"]),
-    "Phyrexia: All Will Be One": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["ONE"]), 
-    "Alchemy: Phyrexia": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["Y23ONE"]), 
-    "The Brothers' War": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["BRO"]), 
-    "Alchemy: The Brothers' War": SetInfo(arena=["ALL"],scryfall=[],seventeenlands=["Y23BRO"]),
+    "Through the Omenpaths" : SetInfo(arena=["ALL"],scryfall=["om1"],seventeenlands=["OM1"]),
+    "Outlaws of Thunder Junction" : SetInfo(arena=["ALL"],scryfall=["otj"],seventeenlands=["OTJ"]),
+    "Wilds of Eldraine" : SetInfo(arena=["ALL"],scryfall=["woe"],seventeenlands=["WOE"]),
+    "March of the Machine" : SetInfo(arena=["ALL"],scryfall=["mom"],seventeenlands=["MOM"]),
+    "March of the Machine: The Aftermath": SetInfo(arena=["ALL"],scryfall=["mat"],seventeenlands=["MAT"]),
+    "Shadows over Innistrad Remastered": SetInfo(arena=["ALL"],scryfall=["sir"],seventeenlands=["SIR"]),
+    "Phyrexia: All Will Be One": SetInfo(arena=["ALL"],scryfall=["one"],seventeenlands=["ONE"]),
+    "Alchemy: Phyrexia": SetInfo(arena=["ALL"],scryfall=["yone"],seventeenlands=["Y23ONE"]),
+    "The Brothers' War": SetInfo(arena=["ALL"],scryfall=["bro"],seventeenlands=["BRO"]),
+    "Alchemy: The Brothers' War": SetInfo(arena=["ALL"],scryfall=["ybro"],seventeenlands=["Y23BRO"]),
 }
 
 CHECKED_SETS_17LANDS = {
@@ -548,6 +548,40 @@ def test_substitute_string_latest(mock_urlopen, limited_sets):
     assert output_sets.special_events[0].set_code == "OTJ"
     assert output_sets.special_events[1].label == "OpenDay2"
     assert output_sets.special_events[1].set_code == "OTJ"
+
+@patch("src.limited_sets.urllib.request.urlopen")
+def test_scryfall_codes_populated_for_standard_sets(mock_urlopen, limited_sets):
+    """Verify that standard sets have their Scryfall code populated after retrieve_limited_sets."""
+    mock_urlopen.return_value.read.side_effect = [MOCK_URL_RESPONSE_17LANDS_FILTERS, MOCK_URL_RESPONSE_SCRYFALL_SETS]
+    if os.path.exists(SETS_FILE_LOCATION):
+        os.remove(SETS_FILE_LOCATION)
+
+    output_sets = limited_sets.retrieve_limited_sets()
+
+    # Standard sets (OTJ, WOE, MOM, etc.) should have scryfall codes from Scryfall API
+    otj = output_sets.data["Outlaws of Thunder Junction"]
+    assert otj.scryfall == ["otj"], f"Expected scryfall=['otj'], got {otj.scryfall}"
+
+    woe = output_sets.data["Wilds of Eldraine"]
+    assert woe.scryfall == ["woe"], f"Expected scryfall=['woe'], got {woe.scryfall}"
+
+    one = output_sets.data["Phyrexia: All Will Be One"]
+    assert one.scryfall == ["one"], f"Expected scryfall=['one'], got {one.scryfall}"
+
+@patch("src.limited_sets.urllib.request.urlopen")
+def test_scryfall_codes_populated_for_alchemy_sets(mock_urlopen, limited_sets):
+    """Verify that alchemy sets have their Scryfall code populated."""
+    mock_urlopen.return_value.read.side_effect = [MOCK_URL_RESPONSE_17LANDS_FILTERS, MOCK_URL_RESPONSE_SCRYFALL_SETS]
+    if os.path.exists(SETS_FILE_LOCATION):
+        os.remove(SETS_FILE_LOCATION)
+
+    output_sets = limited_sets.retrieve_limited_sets()
+
+    alchemy_one = output_sets.data["Alchemy: Phyrexia"]
+    assert alchemy_one.scryfall == ["yone"], f"Expected scryfall=['yone'], got {alchemy_one.scryfall}"
+
+    alchemy_bro = output_sets.data["Alchemy: The Brothers' War"]
+    assert alchemy_bro.scryfall == ["ybro"], f"Expected scryfall=['ybro'], got {alchemy_bro.scryfall}"
 
 @patch("src.limited_sets.urllib.request.urlopen")
 def test_substitute_string_date_shift(mock_urlopen, limited_sets):
