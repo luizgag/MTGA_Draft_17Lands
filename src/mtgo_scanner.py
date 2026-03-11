@@ -239,44 +239,33 @@ class MtgoScanner:
 
         return update
 
-    def retrieve_data_sources(self):
-        '''Return a list of set files that can be used with the current active draft'''
+    def retrieve_data_sources(self, db_path=None):
+        '''Return a dict of all downloaded datasets, with the current draft's set listed first.
+
+        Label format is always "[SET_CODE] Merged" so users can distinguish
+        between different downloaded sets in the dropdown.
+        '''
+        from src.utils import retrieve_all_local_sets
+
         data_sources = {}
 
         try:
-            if self.draft_type != constants.LIMITED_TYPE_UNKNOWN and self.draft_sets:
-                set_ids = self.draft_sets[:]
-                set_ids.extend([x.seventeenlands[0] for x in self.set_list.data.values() if x.set_code in self.draft_sets])
-                file_list, error_list = retrieve_local_set_list(set_ids)
+            file_list, error_list = retrieve_all_local_sets(db_path=db_path)
 
-                for error_string in error_list:
-                    logger.error(error_string)
+            for error_string in error_list:
+                logger.error(error_string)
 
-                if file_list:
-                    file_list.sort(key=lambda x: x[1] == constants.LIMITED_TYPE_STRING_DRAFT_PREMIER, reverse=True)
+            if file_list:
+                # Two stable sorts: first by end_date descending, then current draft first
+                current_sets = set(self.draft_sets) if self.draft_sets else set()
+                file_list.sort(key=lambda x: x[4], reverse=True)
+                file_list.sort(key=lambda x: x[0] not in current_sets)
 
-                for file in file_list:
-                    set_code = file[0]
-                    event_type = file[1]
-                    user_group = file[2]
-                    location = file[6]
-                    if event_type == "":
-                        # New 2-segment merged file
-                        if re.search(r"^[Yy]\d{2}", set_code):
-                            type_string = f"[{set_code[0:3]}] Merged"
-                        elif re.search(r'[.\-/]', set_code):
-                            dataset_type = re.split(r'[.\-/]', set_code)[-1]
-                            type_string = f"[{dataset_type[0:3]}] Merged"
-                        else:
-                            type_string = "Merged"
-                    elif re.search(r"^[Yy]\d{2}", set_code):
-                        type_string = f"[{set_code[0:3]}]{event_type} ({user_group})"
-                    elif re.search(r'[.\-/]', set_code):
-                        dataset_type = re.split(r'[.\-/]', set_code)[-1]
-                        type_string = f"[{dataset_type[0:3]}] {event_type} ({user_group})"
-                    else:
-                        type_string = f"{event_type} ({user_group})"
-                    data_sources[type_string] = location
+            for file in file_list:
+                set_code = file[0]
+                location = file[6]
+                type_string = f"[{set_code}] Merged"
+                data_sources[type_string] = location
 
         except Exception as error:
             logger.error(error)

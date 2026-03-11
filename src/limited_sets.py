@@ -258,10 +258,13 @@ class LimitedSets:
             for set_name, set_fields in self.sets_scryfall.data.items():
                 set_code = set_fields.seventeenlands[0]
                 if set_code in self.sets_17lands.data:
+                    merged_info = self.sets_17lands.data[set_code]
+                    if set_fields.scryfall:
+                        merged_info.scryfall = set_fields.scryfall
                     if re.match(r"^Y\d{2}[A-Za-z]{3}$", set_code):
-                        alchemy_sets[set_name] = self.sets_17lands.data[set_code]
+                        alchemy_sets[set_name] = merged_info
                     else:
-                        temp_dict.data[set_name] = self.sets_17lands.data[set_code]
+                        temp_dict.data[set_name] = merged_info
                     set_codes_to_remove.append(set_code)
             
             # Adding the unknown 17Lands sets to the list
@@ -334,6 +337,7 @@ class LimitedSets:
                     else:
                         self.sets_scryfall.data[set_name] = SetInfo(
                             arena=[constants.SET_SELECTION_ALL],
+                            scryfall=[set_code],
                             seventeenlands=[set_code.upper()]
                         )
                     counter += 1
@@ -356,6 +360,7 @@ class LimitedSets:
         set_entry = SetInfo()
         if ("parent_set_code" in data) and ("block_code" in data):
             set_entry.arena = [constants.SET_SELECTION_ALL]
+            set_entry.scryfall = [set_code]
             set_entry.seventeenlands = [
                 f"{data['block_code'].upper()}{data['parent_set_code'].upper()}"]
 
@@ -365,17 +370,20 @@ class LimitedSets:
 
             if parent_code:
                 set_entry.arena = [constants.SET_SELECTION_ALL]
+                set_entry.scryfall = [set_code]
                 set_entry.seventeenlands = [
                     f"{data['block_code'].upper()}{parent_code[0].upper()}"]
 
             else:
                 set_entry = SetInfo(
                     arena=[constants.SET_SELECTION_ALL],
+                    scryfall=[set_code],
                     seventeenlands=[set_code.upper()]
                 )
         else:
             set_entry = SetInfo(
                 arena=[constants.SET_SELECTION_ALL],
+                scryfall=[set_code],
                 seventeenlands=[set_code.upper()]
             )
         return set_entry

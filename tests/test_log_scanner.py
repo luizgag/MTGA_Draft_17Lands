@@ -1282,7 +1282,7 @@ class TestRetrieveDataSourcesAllSets:
         """The active draft's set should appear first in the dropdown."""
         scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS, sets_location=TEST_SETS_DIRECTORY)
         scanner.draft_sets = ["ECL"]
-        scanner.draft_type = constants.LIMITED_TYPE_DRAFT_PREMIER_V1  # any non-UNKNOWN type
+        scanner.draft_type = constants.LIMITED_TYPE_DRAFT_PREMIER_V1
 
         sources = scanner.retrieve_data_sources(db_path=db_with_sets)
         labels = list(sources.keys())
