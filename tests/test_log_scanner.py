@@ -7,6 +7,7 @@ from unittest.mock import patch
 from src.log_scanner import ArenaScanner, Source
 from src.limited_sets import SetDictionary, SetInfo, SpecialEvent
 import src.constants as constants
+import src.database as database
 
 TEST_LOG_DIRECTORY = os.path.join(os.getcwd(), "tests")
 TEST_LOG_FILE_LOCATION = os.path.join(os.getcwd(), "tests", "Player.log")
@@ -1227,3 +1228,62 @@ def test_draft_start_search_returns_true_after_non_draft_event(function_scanner)
     assert function_scanner.draft_sets == ["OTJ"], (
         f"draft_sets should be ['OTJ'], got {function_scanner.draft_sets}"
     )
+
+
+@pytest.fixture
+def db_with_sets(tmp_path):
+    """Create a temp DB with two datasets."""
+    db_path = str(tmp_path / "test.db")
+    database.save_dataset("ECL", {
+        "meta": {"collection_date": "2026-02-28", "start_date": "2026-01-20",
+                 "end_date": "2026-02-28", "version": 3.0, "game_count": 100000},
+        "color_ratings": {},
+        "card_ratings": {},
+    }, db_path)
+    database.save_dataset("TMT", {
+        "meta": {"collection_date": "2026-03-11", "start_date": "2026-03-03",
+                 "end_date": "2026-03-11", "version": 3.0, "game_count": 50000},
+        "color_ratings": {},
+        "card_ratings": {},
+    }, db_path)
+    return db_path
+
+
+class TestRetrieveDataSourcesAllSets:
+    """Test that retrieve_data_sources shows all downloaded sets."""
+
+    def test_shows_all_sets_when_no_draft(self, db_with_sets):
+        """Without a draft, all downloaded sets should still appear."""
+        scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS, sets_location=TEST_SETS_DIRECTORY)
+        sources = scanner.retrieve_data_sources(db_path=db_with_sets)
+        labels = list(sources.keys())
+        ecl_labels = [l for l in labels if "ECL" in l]
+        tmt_labels = [l for l in labels if "TMT" in l]
+        assert len(ecl_labels) >= 1, f"ECL not found in labels: {labels}"
+        assert len(tmt_labels) >= 1, f"TMT not found in labels: {labels}"
+
+    def test_empty_db_returns_none_source(self, tmp_path):
+        """With no datasets in DB, should return DATA_SOURCES_NONE."""
+        db_path = str(tmp_path / "empty.db")
+        scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS, sets_location=TEST_SETS_DIRECTORY)
+        sources = scanner.retrieve_data_sources(db_path=db_path)
+        assert sources == constants.DATA_SOURCES_NONE
+
+    def test_labels_include_set_code(self, db_with_sets):
+        """Each label should include the set code for identification."""
+        scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS, sets_location=TEST_SETS_DIRECTORY)
+        sources = scanner.retrieve_data_sources(db_path=db_with_sets)
+        for label in sources:
+            if label == "None":
+                continue
+            assert "[" in label and "]" in label, f"Label missing set code bracket format: {label}"
+
+    def test_current_draft_set_listed_first(self, db_with_sets):
+        """The active draft's set should appear first in the dropdown."""
+        scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS, sets_location=TEST_SETS_DIRECTORY)
+        scanner.draft_sets = ["ECL"]
+        scanner.draft_type = constants.LIMITED_TYPE_DRAFT_PREMIER_V1
+
+        sources = scanner.retrieve_data_sources(db_path=db_with_sets)
+        labels = list(sources.keys())
+        assert labels[0].startswith("[ECL]"), f"Expected ECL first, got: {labels}"
