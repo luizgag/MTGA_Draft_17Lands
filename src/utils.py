@@ -120,6 +120,46 @@ def retrieve_local_set_list(codes, names=None, db_path=None):
 
     return file_list, error_list
     
+def retrieve_all_local_sets(db_path=None):
+    '''Returns a list of ALL datasets from the SQLite database (no filtering).
+
+    Each entry is a tuple matching retrieve_local_set_list format:
+        (set_name, event_type, user_group, start_date, end_date, game_count, file_location)
+    '''
+    import src.database as database
+
+    file_list = []
+    error_list = []
+
+    try:
+        all_meta = database.list_datasets_with_meta(db_path)
+    except Exception as error:
+        error_list.append(error)
+        return file_list, error_list
+
+    for row in all_meta:
+        try:
+            set_code = row["set_code"]
+            start_date = row.get("start_date", "")
+            end_date = row.get("end_date", "")
+            game_count = int(row.get("game_count", 0) or 0)
+            file_location = os.path.join(SETS_FOLDER, f"{set_code}_{SET_FILE_SUFFIX}")
+
+            file_list.append((
+                set_code,
+                "",       # event_type
+                "",       # user_group
+                start_date,
+                end_date,
+                game_count,
+                file_location,
+            ))
+        except Exception as error:
+            error_list.append(error)
+
+    return file_list, error_list
+
+
 def check_file_integrity(filename):
     '''Extracts data from a file to determine if it's formatted correctly'''
     result = Result.VALID
