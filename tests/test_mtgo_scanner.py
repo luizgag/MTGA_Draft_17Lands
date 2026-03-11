@@ -3,6 +3,7 @@ import os
 import shutil
 from src.mtgo_scanner import MtgoScanner, MtgoScannerState
 from src.limited_sets import SetDictionary, SetInfo
+import src.database as database
 
 TEST_DRAFT_LOG = os.path.join(os.getcwd(), "examples", "luluch1-2026.2.6-10252-34431293-ECLECLECL.txt")
 TEST_EXAMPLES_DIR = os.path.join(os.getcwd(), "examples")
@@ -499,3 +500,62 @@ class TestHindsightPickedCard:
         idx, entry = pick_made_entries[0]
         scanner_with_folder.navigate_history(idx - scanner_with_folder.history_index)
         assert entry["picked_card"] in scanner_with_folder.pack_cards
+
+
+@pytest.fixture
+def db_with_sets(tmp_path):
+    """Create a temp DB with ECL and TMT datasets."""
+    db_path = str(tmp_path / "test.db")
+    database.save_dataset("ECL", {
+        "meta": {"collection_date": "2026-02-28", "start_date": "2026-01-20",
+                 "end_date": "2026-02-28", "version": 3.0, "game_count": 100000},
+        "color_ratings": {},
+        "card_ratings": {},
+    }, db_path)
+    database.save_dataset("TMT", {
+        "meta": {"collection_date": "2026-03-11", "start_date": "2026-03-03",
+                 "end_date": "2026-03-11", "version": 3.0, "game_count": 50000},
+        "color_ratings": {},
+        "card_ratings": {},
+    }, db_path)
+    return db_path
+
+
+class TestRetrieveDataSourcesAllSets:
+    """Test that retrieve_data_sources shows all downloaded sets."""
+
+    def test_shows_all_sets_not_just_current_draft(self, scanner_with_folder, db_with_sets):
+        """After downloading ECL and TMT, both should appear in data sources."""
+        scanner_with_folder.draft_start_search()
+        sources = scanner_with_folder.retrieve_data_sources(db_path=db_with_sets)
+        assert isinstance(sources, dict)
+        labels = list(sources.keys())
+        ecl_labels = [l for l in labels if "ECL" in l]
+        tmt_labels = [l for l in labels if "TMT" in l]
+        assert len(ecl_labels) >= 1, f"ECL not found in labels: {labels}"
+        assert len(tmt_labels) >= 1, f"TMT not found in labels: {labels}"
+
+    def test_current_draft_set_listed_first(self, scanner_with_folder, db_with_sets):
+        """The current draft's set should be the first entry."""
+        scanner_with_folder.draft_start_search()
+        sources = scanner_with_folder.retrieve_data_sources(db_path=db_with_sets)
+        first_label = next(iter(sources))
+        assert "ECL" in first_label, f"Expected ECL first, got: {first_label}"
+
+    def test_no_draft_still_shows_all_sets(self, db_with_sets):
+        """Even without a detected draft, all downloaded sets should appear."""
+        scanner = MtgoScanner(TEST_EXAMPLES_DIR, TEST_SETS)
+        sources = scanner.retrieve_data_sources(db_path=db_with_sets)
+        labels = list(sources.keys())
+        ecl_labels = [l for l in labels if "ECL" in l]
+        tmt_labels = [l for l in labels if "TMT" in l]
+        assert len(ecl_labels) >= 1, f"ECL not found in labels: {labels}"
+        assert len(tmt_labels) >= 1, f"TMT not found in labels: {labels}"
+
+    def test_empty_db_returns_none_source(self, tmp_path):
+        """With no datasets in DB, should return DATA_SOURCES_NONE."""
+        from src import constants
+        db_path = str(tmp_path / "empty.db")
+        scanner = MtgoScanner(TEST_EXAMPLES_DIR, TEST_SETS)
+        sources = scanner.retrieve_data_sources(db_path=db_path)
+        assert sources == constants.DATA_SOURCES_NONE
