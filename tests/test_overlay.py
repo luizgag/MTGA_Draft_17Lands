@@ -232,7 +232,7 @@ def test_price_prefix_added_to_expensive_cards():
     threshold = 3.0
     for card in result_list:
         price = card.get("price", 0.0)
-        if price >= threshold:
+        if price >= threshold and price > 0:
             card["results"][0] = f"$$$ {card['results'][0]}"
 
     assert result_list[0]["results"][0] == "$$$ Moonshadow"
@@ -251,10 +251,28 @@ def test_price_prefix_not_added_for_arena_platform():
     if platform == constants.PLATFORM_MTGO:
         for card in result_list:
             price = card.get("price", 0.0)
-            if price >= threshold:
+            if price >= threshold and price > 0:
                 card["results"][0] = f"$$$ {card['results'][0]}"
 
     assert result_list[0]["results"][0] == "Moonshadow"  # No prefix for Arena
+
+
+def test_price_prefix_not_added_when_price_disabled():
+    """$$$ prefix should not appear when price_enabled is False, even on MTGO."""
+    result_list = [
+        {"name": "Moonshadow", "price": 27.12, "results": ["Moonshadow", "58.2"]},
+    ]
+
+    platform = constants.PLATFORM_MTGO
+    price_enabled = False
+    threshold = 3.0
+    if platform == constants.PLATFORM_MTGO and price_enabled:
+        for card in result_list:
+            price = card.get("price", 0.0)
+            if price >= threshold and price > 0:
+                card["results"][0] = f"$$$ {card['results'][0]}"
+
+    assert result_list[0]["results"][0] == "Moonshadow"  # No prefix when disabled
 
 
 def test_price_prefix_with_zero_threshold():

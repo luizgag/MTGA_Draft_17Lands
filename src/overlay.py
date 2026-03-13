@@ -864,7 +864,8 @@ class Overlay(ScaledWindow):
                         break
 
             # Add $$$ prefix for expensive MTGO cards
-            if self.configuration.settings.platform == constants.PLATFORM_MTGO:
+            if (self.configuration.settings.platform == constants.PLATFORM_MTGO
+                    and self.configuration.settings.price_enabled):
                 threshold = self.configuration.settings.price_threshold
                 for card in result_list:
                     price = card.get(constants.DATA_FIELD_PRICE, 0.0)
