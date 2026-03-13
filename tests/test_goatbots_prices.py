@@ -4,6 +4,10 @@ import io
 import zipfile
 from unittest.mock import patch, MagicMock
 from src.file_extractor import retrieve_goatbots_prices
+from src import constants
+from src.database import save_dataset
+from src.dataset import Dataset
+from src.card_logic.card_result import CardResult
 
 
 def _make_zip(data_dict):
@@ -130,3 +134,102 @@ def test_price_data_survives_json_roundtrip(tmp_path):
 
     assert loaded["card_ratings"]["1001"]["price"] == pytest.approx(27.12)
     assert loaded["card_ratings"]["1002"]["price"] == pytest.approx(0.05)
+
+
+def test_price_survives_db_to_card_result_flow(tmp_path):
+    """Price field should survive the full DB -> Dataset -> CardResult pipeline."""
+    all_decks_stats = {
+        "gihwr": 60.0, "ohwr": 58.0, "gpwr": 55.0, "gnswr": 57.0, "gdwr": 56.0,
+        "alsa": 2.5, "ata": 3.0, "iwd": 5.0,
+        "ngp": 1000, "ngoh": 800, "gih": 700, "ngnd": 200, "ngd": 150,
+    }
+
+    dataset = {
+        "meta": {},
+        "color_ratings": {},
+        "card_ratings": {
+            "2001": {
+                "name": "Expensive Card",
+                "price": 27.12,
+                "cmc": 3,
+                "mana_cost": "{1}{W}{W}",
+                "isprimarycard": 1,
+                "linkedfacetype": 0,
+                "rarity": "mythic",
+                "colors": ["W"],
+                "types": ["Creature"],
+                "image": ["https://example.com/expensive.jpg"],
+                "deck_colors": {"All Decks": dict(all_decks_stats)},
+            },
+            "2002": {
+                "name": "Cheap Card",
+                "price": 0.05,
+                "cmc": 1,
+                "mana_cost": "{R}",
+                "isprimarycard": 1,
+                "linkedfacetype": 0,
+                "rarity": "common",
+                "colors": ["R"],
+                "types": ["Instant"],
+                "image": ["https://example.com/cheap.jpg"],
+                "deck_colors": {"All Decks": dict(all_decks_stats)},
+            },
+        },
+    }
+
+    # Step 2: save to temp DB
+    db_path = str(tmp_path / "test.db")
+    save_dataset("TMT", dataset, db_path=db_path)
+
+    # Step 3: load via Dataset
+    ds = Dataset()
+    result = ds.open_set("TMT", db_path=db_path)
+    assert result.name == "VALID"
+
+    # Step 4: retrieve by name
+    card_list = ds.get_data_by_name(["Expensive Card", "Cheap Card"])
+    assert len(card_list) == 2
+
+    # Price field must survive DB round-trip
+    prices_by_name = {c["name"]: c.get(constants.DATA_FIELD_PRICE) for c in card_list}
+    assert prices_by_name["Expensive Card"] == pytest.approx(27.12)
+    assert prices_by_name["Cheap Card"] == pytest.approx(0.05)
+
+    # Step 5: build CardResult with mocked dependencies
+    mock_metrics = MagicMock()
+    mock_metrics.get_metrics.return_value = (55.0, 5.0)
+
+    mock_config = MagicMock()
+    mock_config.settings.deck_filter = constants.FILTER_OPTION_ALL_DECKS
+    mock_config.settings.result_format = "Rating"
+    mock_config.settings.color_identity_enabled = False
+    mock_config.settings.best_in_column_threshold = 10.0
+
+    card_result = CardResult(
+        set_metrics=mock_metrics,
+        tier_data={},
+        configuration=mock_config,
+        pick_number=1,
+    )
+
+    # Step 6: call return_results
+    fields = [constants.DATA_FIELD_NAME, constants.DATA_FIELD_GIHWR]
+    results = card_result.return_results(card_list, ["All Decks"], fields)
+
+    # Step 7: price field must still be present in returned cards
+    assert len(results) == 2
+    result_prices = {c["name"]: c.get(constants.DATA_FIELD_PRICE) for c in results}
+    assert result_prices["Expensive Card"] == pytest.approx(27.12)
+    assert result_prices["Cheap Card"] == pytest.approx(0.05)
+
+    # Step 8: apply $$$ display logic (platform=MTGO, price_enabled=True, threshold=3.0)
+    threshold = 3.0
+    for card in results:
+        price = card.get(constants.DATA_FIELD_PRICE, 0.0)
+        if price >= threshold and price > 0:
+            card["results"][0] = f"$$$ {card['results'][0]}"
+
+    names_in_results = [card["results"][0] for card in results]
+    assert "$$$ Expensive Card" in names_in_results
+    # Cheap Card (0.05) is below threshold — should NOT have $$$ prefix
+    assert not any(n.startswith("$$$") and "Cheap" in n for n in names_in_results)
