@@ -235,3 +235,79 @@ def test_price_survives_db_to_card_result_flow(tmp_path):
     assert "$$$ Expensive Card" in names_in_results
     # Cheap Card (0.05) is below threshold — should NOT have $$$ prefix
     assert not any(n.startswith("$$$") and "Cheap" in n for n in names_in_results)
+
+
+def test_price_isolation_between_sets(tmp_path):
+    """Prices are stored and retrieved per-set; different sets don't contaminate each other."""
+    all_decks_stats = {
+        "gihwr": 50.0, "ohwr": 50.0, "gpwr": 50.0, "gnswr": 50.0, "gdwr": 50.0,
+        "alsa": 3.0, "ata": 4.0, "iwd": 0.0,
+        "ngp": 100, "ngoh": 80, "gih": 70, "ngnd": 20, "ngd": 15,
+    }
+
+    # Create dataset for SET_A with Shared Card at price 10.0
+    dataset_a = {
+        "meta": {},
+        "color_ratings": {},
+        "card_ratings": {
+            "3001": {
+                "name": "Shared Card",
+                "price": 10.0,
+                "cmc": 2,
+                "mana_cost": "{1}{W}",
+                "isprimarycard": 1,
+                "linkedfacetype": 0,
+                "rarity": "common",
+                "colors": ["W"],
+                "types": ["Creature"],
+                "image": [],
+                "deck_colors": {"All Decks": dict(all_decks_stats)},
+            },
+        },
+    }
+
+    # Create dataset for SET_B with Shared Card at price 0.5
+    dataset_b = {
+        "meta": {},
+        "color_ratings": {},
+        "card_ratings": {
+            "4001": {
+                "name": "Shared Card",
+                "price": 0.5,
+                "cmc": 2,
+                "mana_cost": "{1}{W}",
+                "isprimarycard": 1,
+                "linkedfacetype": 0,
+                "rarity": "common",
+                "colors": ["W"],
+                "types": ["Creature"],
+                "image": [],
+                "deck_colors": {"All Decks": dict(all_decks_stats)},
+            },
+        },
+    }
+
+    # Save both datasets to the same temp DB
+    db_path = str(tmp_path / "test.db")
+    save_dataset("SET_A", dataset_a, db_path=db_path)
+    save_dataset("SET_B", dataset_b, db_path=db_path)
+
+    # Load SET_A and retrieve Shared Card
+    ds_a = Dataset()
+    result_a = ds_a.open_set("SET_A", db_path=db_path)
+    assert result_a.name == "VALID"
+
+    card_list_a = ds_a.get_data_by_name(["Shared Card"])
+    assert len(card_list_a) == 1
+    assert card_list_a[0]["name"] == "Shared Card"
+    assert card_list_a[0].get(constants.DATA_FIELD_PRICE) == pytest.approx(10.0)
+
+    # Load SET_B and retrieve Shared Card
+    ds_b = Dataset()
+    result_b = ds_b.open_set("SET_B", db_path=db_path)
+    assert result_b.name == "VALID"
+
+    card_list_b = ds_b.get_data_by_name(["Shared Card"])
+    assert len(card_list_b) == 1
+    assert card_list_b[0]["name"] == "Shared Card"
+    assert card_list_b[0].get(constants.DATA_FIELD_PRICE) == pytest.approx(0.5)
