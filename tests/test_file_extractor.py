@@ -628,6 +628,128 @@ def test_delete_old_set_files(mock_listdir, mock_remove):
     assert os.path.join(constants.SETS_FOLDER, "ECL_TradDraft_Top_Data.json") in deleted
 
 
+# --- Test backfill unmatched 17Lands cards ---
+
+def test_process_17lands_data_captures_metadata(file_extractor):
+    """_process_17lands_data stores mtga_id, color, rarity, types from the API response."""
+    mock_api_data = [
+        {
+            "name": "New TMT Card",
+            "url": "/static/images/cards/tmt_001.jpg",
+            "mtga_id": 99001,
+            "color": "WU",
+            "rarity": "rare",
+            "types": ["Creature"],
+            "ever_drawn_win_rate": 0.60,
+            "avg_seen": 2.5,
+            "drawn_improvement_win_rate": 0.05,
+            "drawn_game_count": 800,
+        }
+    ]
+    file_extractor._process_17lands_data("All Decks", mock_api_data)
+
+    rating_data = file_extractor.card_ratings["New TMT Card"]
+    assert rating_data.get("mtga_id") == 99001
+    assert rating_data.get("color") == "WU"
+    assert rating_data.get("rarity") == "rare"
+    assert rating_data.get("types") == ["Creature"]
+
+
+def test_assemble_set_backfills_unmatched_cards(file_extractor):
+    """_assemble_set backfills 17Lands cards not found in card_dict using mtga_id as key."""
+    file_extractor.select_sets(MagicMock(seventeenlands=["TMT"]))
+    # card_dict has no matching cards for the 17Lands data
+    file_extractor.card_dict = {
+        "11111": {
+            constants.DATA_FIELD_NAME: "Unrelated Reprint",
+            constants.DATA_FIELD_CMC: 1,
+            constants.DATA_FIELD_MANA_COST: "{W}",
+            constants.DATA_FIELD_COLORS: ["W"],
+            constants.DATA_FIELD_TYPES: ["Creature"],
+            constants.DATA_SECTION_IMAGES: [],
+        }
+    }
+    # card_ratings has a card with mtga_id that isn't in card_dict
+    file_extractor.card_ratings = {
+        "Brand New TMT Card": {
+            constants.DATA_SECTION_IMAGES: ["https://example.com/tmt.jpg"],
+            "mtga_id": 99999,
+            "color": "R",
+            "rarity": "uncommon",
+            "types": ["Instant"],
+            constants.DATA_SECTION_RATINGS: [
+                {"All Decks": {constants.DATA_FIELD_GIHWR: 58.0, constants.DATA_FIELD_ALSA: 3.0}}
+            ],
+        }
+    }
+
+    file_extractor._assemble_set(matching_only=True)
+
+    card_ratings = file_extractor.combined_data["card_ratings"]
+    assert 99999 in card_ratings, "Backfilled card should be keyed by mtga_id"
+    backfilled = card_ratings[99999]
+    assert backfilled[constants.DATA_FIELD_NAME] == "Brand New TMT Card"
+    assert backfilled[constants.DATA_FIELD_COLORS] == ["R"]
+    assert backfilled[constants.DATA_FIELD_RARITY] == "uncommon"
+    assert backfilled[constants.DATA_FIELD_TYPES] == ["Instant"]
+    assert backfilled[constants.DATA_SECTION_IMAGES] == ["https://example.com/tmt.jpg"]
+    assert backfilled[constants.DATA_FIELD_DECK_COLORS]["All Decks"][constants.DATA_FIELD_GIHWR] == 58.0
+
+
+def test_assemble_set_no_duplicate_backfill(file_extractor):
+    """Cards matched from card_dict are NOT duplicated by the backfill logic."""
+    file_extractor.select_sets(MagicMock(seventeenlands=["TMT"]))
+    file_extractor.card_dict = {
+        "22222": {
+            constants.DATA_FIELD_NAME: "Matched Card",
+            constants.DATA_FIELD_CMC: 2,
+            constants.DATA_FIELD_MANA_COST: "{1}{U}",
+            constants.DATA_FIELD_COLORS: ["U"],
+            constants.DATA_FIELD_TYPES: ["Creature"],
+            constants.DATA_SECTION_IMAGES: [],
+        }
+    }
+    file_extractor.card_ratings = {
+        "Matched Card": {
+            constants.DATA_SECTION_IMAGES: ["https://example.com/matched.jpg"],
+            "mtga_id": 88888,
+            "color": "U",
+            "rarity": "common",
+            "types": ["Creature"],
+            constants.DATA_SECTION_RATINGS: [
+                {"All Decks": {constants.DATA_FIELD_GIHWR: 50.0, constants.DATA_FIELD_ALSA: 4.0}}
+            ],
+        }
+    }
+
+    file_extractor._assemble_set(matching_only=True)
+
+    card_ratings = file_extractor.combined_data["card_ratings"]
+    # Should only appear once (matched from card_dict, not duplicated by backfill)
+    assert "22222" in card_ratings
+    assert 88888 not in card_ratings
+
+
+def test_assemble_set_backfill_skips_cards_without_mtga_id(file_extractor):
+    """17Lands cards without an mtga_id are skipped during backfill."""
+    file_extractor.select_sets(MagicMock(seventeenlands=["TMT"]))
+    file_extractor.card_dict = {}
+    file_extractor.card_ratings = {
+        "No ID Card": {
+            constants.DATA_SECTION_IMAGES: [],
+            "mtga_id": None,
+            "color": "G",
+            "rarity": "common",
+            "types": ["Sorcery"],
+            constants.DATA_SECTION_RATINGS: [],
+        }
+    }
+
+    file_extractor._assemble_set(matching_only=True)
+
+    assert file_extractor.combined_data["card_ratings"] == {}
+
+
 @patch("src.file_extractor.os.remove")
 @patch("src.file_extractor.os.listdir")
 def test_delete_old_set_files_case_insensitive(mock_listdir, mock_remove):

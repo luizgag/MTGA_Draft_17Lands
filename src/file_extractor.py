@@ -1001,6 +1001,52 @@ class FileExtractor:
             elif not matching_only:
                 self.combined_data["card_ratings"][card] = card_data
 
+        if matching_only:
+            self._backfill_unmatched_cards()
+
+    def _backfill_unmatched_cards(self):
+        '''Add cards from 17Lands data that were not found in the local Arena data.'''
+        matched_names = {
+            v[constants.DATA_FIELD_NAME].replace("///", "//")
+            for v in self.combined_data["card_ratings"].values()
+        }
+        for card_name, rating_data in self.card_ratings.items():
+            if card_name in matched_names:
+                continue
+            mtga_id = rating_data.get("mtga_id")
+            if not mtga_id:
+                continue
+
+            raw_types = rating_data.get("types", [])
+            types = []
+            for t in raw_types:
+                types.extend(extract_types(t))
+            types = list(dict.fromkeys(types))
+
+            card_entry = {
+                constants.DATA_FIELD_NAME: card_name,
+                constants.DATA_FIELD_CMC: 0,
+                constants.DATA_FIELD_MANA_COST: "",
+                constants.DATA_FIELD_COLORS: list(rating_data.get("color", "")),
+                constants.DATA_FIELD_TYPES: types,
+                constants.DATA_FIELD_RARITY: rating_data.get("rarity", ""),
+                constants.DATA_SECTION_IMAGES: rating_data.get(constants.DATA_SECTION_IMAGES, []),
+                "isprimarycard": 1,
+                "linkedfacetype": 0,
+                constants.DATA_FIELD_DECK_COLORS: {},
+            }
+            for color in self.deck_colors:
+                card_entry[constants.DATA_FIELD_DECK_COLORS][color] = {
+                    x: 0.0 for x in constants.DATA_FIELD_17LANDS_DICT
+                    if x != constants.DATA_SECTION_IMAGES
+                }
+            for deck_color in rating_data[constants.DATA_SECTION_RATINGS]:
+                for key, value in deck_color.items():
+                    for field in value:
+                        card_entry[constants.DATA_FIELD_DECK_COLORS][key][field] = value[field]
+
+            self.combined_data["card_ratings"][mtga_id] = card_entry
+
     def retrieve_17lands_color_ratings(self):
         '''Use 17Lands endpoint to collect the data from the color_ratings page'''
         result = True
@@ -1032,7 +1078,11 @@ class FileExtractor:
         for card in cards:
             try:
                 card_data = {constants.DATA_SECTION_RATINGS: [],
-                             constants.DATA_SECTION_IMAGES: []}
+                             constants.DATA_SECTION_IMAGES: [],
+                             "mtga_id": card.get("mtga_id"),
+                             "color": card.get("color", ""),
+                             "rarity": card.get("rarity", ""),
+                             "types": card.get("types", [])}
                 color_data = {colors: {}}
                 for key, value in constants.DATA_FIELD_17LANDS_DICT.items():
                     if key == constants.DATA_SECTION_IMAGES:
