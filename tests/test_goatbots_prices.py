@@ -144,6 +144,7 @@ def test_price_survives_db_to_card_result_flow(tmp_path):
         "ngp": 1000, "ngoh": 800, "gih": 700, "ngnd": 200, "ngd": 150,
     }
 
+    # Step 1: build dataset dict
     dataset = {
         "meta": {},
         "color_ratings": {},
@@ -223,6 +224,7 @@ def test_price_survives_db_to_card_result_flow(tmp_path):
     assert result_prices["Cheap Card"] == pytest.approx(0.05)
 
     # Step 8: apply $$$ display logic (platform=MTGO, price_enabled=True, threshold=3.0)
+    # Inline $$$ logic mirrors overlay.py:870-873; changes there must be reflected here
     threshold = 3.0
     for card in results:
         price = card.get(constants.DATA_FIELD_PRICE, 0.0)
